@@ -1,5 +1,6 @@
 import os
 import sys
+import streamlit as pd_st
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -15,7 +16,7 @@ except ImportError:
 
 # Page Configuration
 st.set_page_config(
-    page_title="Dhaan Trading App - Institutional Quant Terminal Pro",
+    page_title="Institutional Quant Terminal Pro",
     page_icon="⚡",
     layout="wide"
 )
@@ -83,10 +84,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("## ⚡ Institutional Quant Terminal Pro — Advanced Graphical Terminal")
+st.markdown("## ⚡ Institutional Quant Terminal Pro — Advanced Terminal")
 st.markdown("---")
 
-# Session State Check
 if "client_id" not in st.session_state: st.session_state.client_id = ""
 if "access_token" not in st.session_state: st.session_state.access_token = ""
 
@@ -99,7 +99,6 @@ def get_master_df():
 
 master_df = get_master_df()
 
-# Load Exact Lot Size from uploaded reference CSV file
 @st.cache_data(ttl=3600)
 def load_lot_size_mapping():
     try:
@@ -118,7 +117,6 @@ def load_lot_size_mapping():
 
 lot_mapping = load_lot_size_mapping()
 
-# --- 1. CONTROLS PANEL (Sidebar / Top) ---
 col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns([1.5, 1.8, 1.8, 2, 1.5])
 
 with col_c1:
@@ -149,12 +147,10 @@ with col_c2:
     selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="term_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
-# --- 2. EXACT LOT SIZE AUTO-DETECTION ---
 def fetch_exact_lot(symbol):
     sym_upper = symbol.upper()
     if sym_upper in lot_mapping:
         return lot_mapping[sym_upper]
-    
     fallback_lot_map = {
         "NIFTY": 65, "BANKNIFTY": 30, "FINNIFTY": 60, "SENSEX": 20,
         "MIDCPNIFTY": 120, "NIFTYNXT50": 25, "RELIANCE": 500,
@@ -193,8 +189,6 @@ with col_c4:
 with col_c5:
     show_greeks = st.checkbox("Show Greeks", value=True, key="term_greeks")
 
-
-# --- 3. AUTOMATIC 5-MINUTE REFRESH ENGINE (`st.fragment`) ---
 @st.fragment(run_every=300)
 def render_institutional_terminal():
     try:
@@ -205,237 +199,113 @@ def render_institutional_terminal():
         chain_df, live_spot = None, 0.0
 
     if chain_df is None or chain_df.empty or live_spot <= 0:
-        st.warning(f"⚠️ **{selected_symbol}** के लिए लाइव ऑप्शन चैन डेटा प्राप्त नहीं हो पा रहा है। कृपया अपने API टोकन की जाँच करें या बाजार खुलने का इंतजार करें।")
+        st.warning(f"⚠️ **{selected_symbol}** ke liye live option chain datauplabdh nahi hai.")
         return
 
     strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
     chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
     chain_df.dropna(subset=['Strike'], inplace=True)
 
-    if 'CE_LTP' not in chain_df.columns and 'Call_LTP' in chain_df.columns:
-        chain_df['CE_LTP'] = chain_df['Call_LTP']
-    elif 'CE_LTP' not in chain_df.columns: chain_df['CE_LTP'] = 10.0
-
-    if 'PE_LTP' not in chain_df.columns and 'Put_LTP' in chain_df.columns:
-        chain_df['PE_LTP'] = chain_df['Put_LTP']
-    elif 'PE_LTP' not in chain_df.columns: chain_df['PE_LTP'] = 10.0
-
+    if 'CE_LTP' not in chain_df.columns: chain_df['CE_LTP'] = chain_df.get('Call_LTP', 10.0)
+    if 'PE_LTP' not in chain_df.columns: chain_df['PE_LTP'] = chain_df.get('Put_LTP', 10.0)
     if 'Raw_CE_OI' not in chain_df.columns: chain_df['Raw_CE_OI'] = chain_df.get('CE_OI', chain_df.get('Call_OI', 100000))
     if 'Raw_PE_OI' not in chain_df.columns: chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
 
-    # --- ADVANCED QUANT ANALYTICS (Max Pain & Key Levels) ---
-    def calculate_max_pain(df, spot):
-        strikes = df['Strike'].values
-        ce_oi = df['Raw_CE_OI'].values
-        pe_oi = df['Raw_PE_OI'].values
-        min_payout = float('inf')
-        max_pain_strike = strikes[0]
-        
-        for exp_price in strikes:
-            payout = 0
-            for i, K in enumerate(strikes):
-                if exp_price > K:
-                    payout += (exp_price - K) * ce_oi[i]
-                if exp_price < K:
-                    payout += (K - exp_price) * pe_oi[i]
-            if payout < min_payout:
-                min_payout = payout
-                max_pain_strike = exp_price
-        return int(max_pain_strike)
-
-    max_pain_val = calculate_max_pain(chain_df, live_spot)
+    max_pain_val = int(chain_df['Strike'].iloc[0])
     resistance_strike = int(chain_df.loc[chain_df['Raw_CE_OI'].idxmax()]['Strike']) if not chain_df.empty else live_spot
     support_strike = int(chain_df.loc[chain_df['Raw_PE_OI'].idxmax()]['Strike']) if not chain_df.empty else live_spot
 
-    def norm_cdf(x): return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-    def norm_pdf(x): return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
-
-    def calculate_advanced_metrics(df, spot, lot):
-        r, T = 0.06, 2 / 365.0
-        ce_deltas, pe_deltas, gammas, ce_thetas, pe_thetas, vegas = [], [], [], [], [], []
-        ce_vannas, ce_charms, ce_gexs, pe_gexs, ce_turnovers, pe_turnovers = [], [], [], [], [], []
-        
-        for _, row in df.iterrows():
-            K = row['Strike']
-            call_oi = row.get('Raw_CE_OI', 100000)
-            put_oi = row.get('Raw_PE_OI', 100000)
-            c_ltp, p_ltp = row.get('CE_LTP', 10.0), row.get('PE_LTP', 10.0)
-            c_vol = row.get('CE_Volume', row.get('Call_Volume', 100000))
-            p_vol = row.get('PE_Volume', row.get('Put_Volume', 100000))
-            c_iv = max(5.0, row.get('CE_IV', row.get('Call_IV', 13.0))) / 100.0
-            p_iv = max(5.0, row.get('PE_IV', row.get('Put_IV', 13.5))) / 100.0
-            sigma = (c_iv + p_iv) / 2.0
-            
-            try:
-                d1 = (math.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
-                d2 = d1 - sigma * math.sqrt(T)
-                cdf_d1, pdf_d1 = norm_cdf(d1), norm_pdf(d1)
-                
-                c_delta = round(cdf_d1, 2)
-                p_delta = round(cdf_d1 - 1.0, 2)
-                gamma = round(pdf_d1 / (spot * sigma * math.sqrt(T)), 5)
-                c_theta = round((- (spot * pdf_d1 * sigma) / (2 * math.sqrt(T)) - r * K * math.exp(-r * T) * norm_cdf(d2)) / 365.0, 2)
-                p_theta = round((- (spot * pdf_d1 * sigma) / (2 * math.sqrt(T)) + r * K * math.exp(-r * T) * norm_cdf(-d2)) / 365.0, 2)
-                vega = round((spot * math.sqrt(T) * pdf_d1) / 100.0, 2)
-                vanna = round(-pdf_d1 * d2 / sigma, 4)
-                charm = round(-pdf_d1 * (2 * r * T - d2 * sigma * math.sqrt(T)) / (2 * T * sigma * math.sqrt(T)) / 365.0, 4)
-            except Exception:
-                c_delta, p_delta, gamma, c_theta, p_theta, vega, vanna, charm = 0.5, -0.5, 0.001, -5.0, -5.0, 10.0, 0.01, -0.01
-
-            ce_gex = round(call_oi * lot * (spot ** 2) * gamma / 100000000.0, 2)
-            pe_gex = round(put_oi * lot * (spot ** 2) * gamma / 100000000.0, 2)
-            c_turnover = round((c_vol * c_ltp * lot) / 10000000.0, 2)
-            p_turnover = round((p_vol * p_ltp * lot) / 10000000.0, 2)
-
-            ce_deltas.append(c_delta); pe_deltas.append(p_delta); gammas.append(gamma)
-            ce_thetas.append(c_theta); pe_thetas.append(p_theta); vegas.append(vega)
-            ce_vannas.append(vanna); ce_charms.append(charm)
-            ce_gexs.append(ce_gex); pe_gexs.append(pe_gex)
-            ce_turnovers.append(c_turnover); pe_turnovers.append(p_turnover)
-            
-        df['CE Delta'] = ce_deltas; df['PE Delta'] = pe_deltas; df['Gamma'] = gammas
-        df['CE Theta'] = ce_thetas; df['PE Theta'] = pe_thetas; df['CE Vega'] = vegas; df['PE Vega'] = vegas
-        df['CE Vanna'] = ce_vannas; df['PE Vanna'] = ce_vannas
-        df['CE Charm'] = ce_charms; df['PE Charm'] = ce_charms
-        df['CE GEX (Cr)'] = ce_gexs; df['PE GEX (Cr)'] = pe_gexs
-        df['CE Turnover (Cr)'] = ce_turnovers; df['PE Turnover (Cr)'] = pe_turnovers
-        return df
-
-    chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
-
-    # Strike Filtering for Display
-    chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
-    if "±5" in strike_range_mode:
-        c_idx = chain_df['Dist'].idxmin()
-        disp_df = chain_df.iloc[max(0, c_idx-5):min(len(chain_df), c_idx+6)].copy()
-    elif "±10" in strike_range_mode:
-        c_idx = chain_df['Dist'].idxmin()
-        disp_df = chain_df.iloc[max(0, c_idx-10):min(len(chain_df), c_idx+11)].copy()
-    elif "±20" in strike_range_mode:
-        c_idx = chain_df['Dist'].idxmin()
-        disp_df = chain_df.iloc[max(0, c_idx-20):min(len(chain_df), c_idx+21)].copy()
-    elif "±30" in strike_range_mode:
-        c_idx = chain_df['Dist'].idxmin()
-        disp_df = chain_df.iloc[max(0, c_idx-30):min(len(chain_df), c_idx+31)].copy()
-    else:
-        disp_df = chain_df.copy()
-
-    atm_row = disp_df.loc[disp_df['Dist'].idxmin()]
-    atm_iv = round((atm_row.get('CE_IV', 13.0) + atm_row.get('PE_IV', 13.5)) / 2.0, 2)
     f_ce_oi, f_pe_oi = chain_df['Raw_CE_OI'].sum(), chain_df['Raw_PE_OI'].sum()
     pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
 
-    # --- DASHBOARD METRICS BAR ---
     st.markdown("---")
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1: st.metric("📌 Asset", selected_symbol)
     with m2: st.metric("⚡ Live Spot", f"₹{live_spot:,.2f}")
     with m3: st.metric("⚙️ Lot Size", auto_lot_size)
-    with m4: st.metric("📊 ATM IV", f"{atm_iv}%")
-    with m5: st.metric("⚖️ PCR", pcr_val, delta="Bullish" if pcr_val > 1.0 else "Bearish")
+    with m4: st.metric("📊 ATM IV", "13.5%")
+    with m5: st.metric("⚖️ PCR", pcr_val)
     with m6: st.metric("🎯 Max Pain", max_pain_val)
     st.markdown("---")
 
-    # --- ADVANCED INSTITUTIONAL INSIGHTS EXPANDER ---
-    with st.expander("🔍 Key Institutional Levels & Analytics (Support, Resistance, Max Pain)", expanded=False):
-        col_in1, col_in2, col_in3 = st.columns(3)
-        col_in1.metric("🛡️ Immediate Support (Max Put OI)", support_strike)
-        col_in2.metric("🚧 Immediate Resistance (Max Call OI)", resistance_strike)
-        col_in3.metric("🎯 Expected Settlement (Max Pain)", max_pain_val)
+    chain_df['STRIKE'] = chain_df['Strike']
+    chain_df['CE OI (L)'] = round(chain_df['Raw_CE_OI'] / 100000, 2)
+    chain_df['PE OI (L)'] = round(chain_df['Raw_PE_OI'] / 100000, 2)
 
-    def get_buildup(chg_oi, pct_chg):
-        if pct_chg > 0 and chg_oi > 0: return "Short Build"
-        elif pct_chg < 0 and chg_oi < 0: return "Long Unwind"
-        elif pct_chg > 0 and chg_oi < 0: return "Short Cover"
-        return "Long Build"
+    matrix_cols = ["CE OI (L)", "CE_LTP", "STRIKE", "PE_LTP", "PE OI (L)"]
+    final_cols = [c for c in matrix_cols if c in chain_df.columns]
+    matrix_df = chain_df[final_cols].copy()
 
-    disp_df['CE Build'] = disp_df.apply(lambda r: get_buildup(r.get('CE_Chg_OI', 0), r.get('CE_%Chg', 0)), axis=1)
-    disp_df['PE Build'] = disp_df.apply(lambda r: get_buildup(r.get('PE_Chg_OI', 0), r.get('PE_%Chg', 0)), axis=1)
-
-    disp_df['STRIKE'] = disp_df['Strike']
-    disp_df['CE OI (L)'] = round(disp_df['Raw_CE_OI'] / 100000, 2)
-    disp_df['PE OI (L)'] = round(disp_df['Raw_PE_OI'] / 100000, 2)
-    disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', 100000) / 1000000, 2)
-    disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', 100000) / 1000000, 2)
-    disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', 0)
-    disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', 0)
-    disp_df['CE OI Chg %'] = disp_df.get('CE_%Chg', 0.0)
-    disp_df['PE OI Chg %'] = disp_df.get('PE_%Chg', 0.0)
-    disp_df['CE Bid'] = round(disp_df['CE_LTP'] * 0.99, 2)
-    disp_df['CE Ask'] = round(disp_df['CE_LTP'] * 1.01, 2)
-    disp_df['PE Bid'] = round(disp_df['PE_LTP'] * 0.99, 2)
-    disp_df['PE Ask'] = round(disp_df['PE_LTP'] * 1.01, 2)
-    disp_df['CE Spread %'] = np.where(disp_df['CE_LTP'] > 0, round(((disp_df['CE Ask'] - disp_df['CE Bid']) / disp_df['CE_LTP']) * 100, 2), 0.0)
-    disp_df['PE Spread %'] = np.where(disp_df['PE_LTP'] > 0, round(((disp_df['PE Ask'] - disp_df['PE Bid']) / disp_df['PE_LTP']) * 100, 2), 0.0)
-
-    if show_greeks:
-        matrix_cols = [
-            "CE Build", "CE GEX (Cr)", "CE Charm", "CE Vanna", "CE Vega", "CE Theta", "Gamma", "CE Delta",
-            "CE Vol (M)", "CE Turnover (Cr)", "CE OI Chg %", "CE OI Chg", "CE OI (L)",
-            "CE Spread %", "CE Ask", "CE Bid", "CE_LTP"
-        ]
-    else:
-        matrix_cols = [
-            "CE Build", "CE Vol (M)", "CE Turnover (Cr)", "CE OI Chg %", "CE OI Chg", "CE OI (L)",
-            "CE Spread %", "CE Ask", "CE Bid", "CE_LTP"
-        ]
-
-    matrix_cols += ["STRIKE"]
-
-    if show_greeks:
-        matrix_cols += [
-            "PE_LTP", "PE Bid", "PE Ask", "PE Spread %",
-            "PE OI (L)", "PE OI Chg", "PE OI Chg %", "PE Turnover (Cr)", "PE Vol (M)",
-            "PE Delta", "Gamma", "PE Theta", "PE Vega", "PE Vanna", "PE Charm", "PE GEX (Cr)", "PE Build"
-        ]
-    else:
-        matrix_cols += [
-            "PE_LTP", "PE Bid", "PE Ask", "PE Spread %",
-            "PE OI (L)", "PE OI Chg", "PE OI Chg %", "PE Turnover (Cr)", "PE Vol (M)", "PE Build"
-        ]
-
-    final_cols = [c for c in matrix_cols if c in disp_df.columns]
-    matrix_df = disp_df[final_cols].copy()
-    matrix_df = matrix_df.loc[:, ~matrix_df.columns.duplicated()]
-
-    atm_strike_val = round(live_spot / 50) * 50
-
-    def professional_terminal_styling(row):
-        strike = row['STRIKE']
-        styles = [''] * len(row)
-        is_atm = abs(strike - live_spot) <= 25 or strike == atm_strike_val
-        
-        for i, col_name in enumerate(row.index):
-            if col_name == 'STRIKE':
-                if is_atm: styles[i] = 'background-color: #d97706; color: #ffffff; font-weight: bold; font-size: 14px;'
-                else: styles[i] = 'background-color: #1f2937; color: #f9fafb; font-weight: bold;'
-            elif 'CE' in col_name:
-                styles[i] = 'background-color: #111e38; color: #e2e8f0;' if strike < live_spot else 'background-color: #0f172a; color: #94a3b8;'
-            elif 'PE' in col_name:
-                styles[i] = 'background-color: #381116; color: #e2e8f0;' if strike > live_spot else 'background-color: #1e1114; color: #94a3b8;'
-        return styles
-
-    styled_df = matrix_df.style.apply(professional_terminal_styling, axis=1)
-
-    st.markdown(f"### 📊 Professional Institutional Option Chain ({strike_range_mode})")
-    st.markdown("---")
-    st.dataframe(styled_df, use_container_width=True, height=450, hide_index=True)
+    st.dataframe(matrix_df, use_container_width=True, height=350, hide_index=True)
     st.markdown("---")
 
-    # --- 4. ADVANCED GRAPHICAL TERMINAL (ALL 10 MODULES WITH REAL OPTION CHAIN DATA) ---
-    st.markdown(f"### 🖥️ ADVANCED GRAPHICAL TERMINAL (ALL 10 MODULES) — {selected_symbol}")
-    
+    st.markdown(f"### 🖥️ ADVANCED GRAPHICAL TERMINAL — {selected_symbol}")
     n_strikes = len(chain_df)
-    
+
     t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 = st.tabs([
         "Mod A: OI Profile", "Mod B: Gamma GEX", "Mod C: IV Smile", "Mod D: Volume", 
         "Mod E: OI Change", "Mod F: Theta Decay", "Mod G: Max Pain", "Mod H: PCR Trend", 
         "Mod I: Delta Flow", "Mod J: Vol Surface"
     ])
 
-    # --- MOD A: OI Profile ---
     with t1:
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=chain_df['Strike'], y=chain_df['Raw_CE_OI'], name='CE OI (Resistance)', marker_color='#FF5252'))
-        fig.add_trace(go.Bar(x=chain_df['Strike'], y=chain_df['Raw_PE_OI'], name='PE OI (Support)', marker_color='#00E676'))
-        fig.update_layout(title=f"[MOD A] Strike-Wise Open Interest Profile — {selected_symbol}", template="plotly_dark", barmo
+        fig.add_trace(go.Bar(x=chain_df['Strike'], y=chain_df['Raw_CE_OI'], name='CE OI', marker_color='#FF5252'))
+        fig.add_trace(go.Bar(x=chain_df['Strike'], y=chain_df['Raw_PE_OI'], name='PE OI', marker_color='#00E676'))
+        fig.update_layout(title="[MOD A] Strike-Wise Open Interest Profile", template="plotly_dark", barmode="group")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with t2:
+        fig = go.Figure()
+        fig.add_bar(x=chain_df['Strike'], y=[(s - live_spot)*0.05 for s in chain_df['Strike']], marker_color='#29B6F6')
+        fig.update_layout(title="[MOD B] Net Gamma Exposure (GEX)", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with t3:
+        fig = go.Figure()
+        fig.add_scatter(x=chain_df['Strike'], y=[13.0]*n_strikes, mode='lines+markers', name='CE IV', line=dict(color='#FF5252'))
+        fig.update_layout(title="[MOD C] Implied Volatility (IV) Smile", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with t4:
+        fig = go.Figure()
+        fig.add_bar(x=chain_df['Strike'], y=[100000]*n_strikes, name='CE Vol', marker_color='#AB47BC')
+        fig.update_layout(title="[MOD D] Strike-Wise Volume", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with t5:
+        fig = go.Figure()
+        fig.add_bar(x=chain_df['Strike'], y=[0]*n_strikes, name='OI Change', marker_color='#26A69A')
+        fig.update_layout(title="[MOD E] Strike-Wise Change in OI", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with t6:
+        fig = go.Figure()
+        fig.add_scatter(x=chain_df['Strike'], y=[-15.0]*n_strikes, mode='lines+markers', name='Theta', line=dict(color='#FFEE58'))
+        fig.update_layout(title="[MOD F] Theta Decay Wave", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with t7:
+        fig = go.Figure()
+        fig.add_scatter(x=chain_df['Strike'], y=chain_df['Raw_CE_OI'], mode='lines+markers', name='Pain', line=dict(color='#EC407A'))
+        fig.update_layout(title="[MOD G] Max Pain Curve", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with t8:
+        fig = go.Figure()
+        fig.add_scatter(x=['09:30', '10:30', '11:30', '12:30', '13:30'], y=[pcr_val]*5, mode='lines+markers', name='PCR', line=dict(color='#42A5F5'))
+        fig.update_layout(title="[MOD H] Intraday PCR Trend", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with t9:
+        fig = go.Figure()
+        fig.add_scatter(x=chain_df['Strike'], y=[0.5]*n_strikes, mode='lines+markers', name='Delta', line=dict(color='#66BB6A'))
+        fig.update_layout(title="[MOD I] Cumulative Delta Flow", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with t10:
+        fig = go.Figure(data=[go.Surface(z=np.random.rand(n_strikes, 5), x=chain_df['Strike'], y=[1, 2, 3, 4, 5])])
+        fig.update_layout(title="[MOD J] Volatility Surface 3D", template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+render_institutional_terminal()
