@@ -77,18 +77,24 @@ def get_master_df():
 
 master_df = get_master_df()
 
-# Load Exact Lot Size from uploaded CSV reference file (`Dhan - Nse Fno Lot Size (1).csv`)
+# Load Exact Lot Size from uploaded reference CSV file
 @st.cache_data(ttl=3600)
-def get_lot_size_df():
+def load_lot_size_mapping():
     try:
         csv_path = os.path.join(ROOT_DIR, 'Dhan - Nse Fno Lot Size (1).csv')
         if not os.path.exists(csv_path):
             csv_path = 'Dhan - Nse Fno Lot Size (1).csv'
-        return pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path)
+        mapping = {}
+        for _, row in df.iterrows():
+            sym = str(row['Symbol']).strip().upper()
+            lot = int(row['Lot Size (Aug 2026)'])
+            mapping[sym] = lot
+        return mapping
     except Exception:
-        return pd.DataFrame()
+        return {}
 
-lot_df = get_lot_size_df()
+lot_mapping = load_lot_size_mapping()
 
 # --- 1. CONTROLS PANEL ---
 col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns([1.5, 1.8, 1.8, 2, 1.5])
@@ -121,36 +127,29 @@ with col_c2:
     selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="term_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
-# --- 2. EXACT 2026 LOT SIZE AUTO-DETECTION (सटीक लॉट साइज मैपिंग) ---
+# --- 2. EXACT 2026 LOT SIZE AUTO-DETECTION (सेंसेक्स = 20) ---
 def fetch_exact_lot(symbol):
     sym_upper = symbol.upper()
+    if sym_upper in lot_mapping:
+        return lot_mapping[sym_upper]
     
-    # 1. पहले CSV फाइल से मैच करना
-    if not lot_df.empty and 'Symbol' in lot_df.columns:
-        match = lot_df[lot_df['Symbol'].str.upper() == sym_upper]
-        if not match.empty:
-            for col in ['Lot Size (Aug 2026)', 'Lot Size', 'LOT SIZE']:
-                if col in lot_df.columns:
-                    val = match.iloc[0][col]
-                    if pd.notnull(val) and int(val) > 0:
-                        return int(val)
-                        
-    # 2. आधिकारिक 2026 अपडेटेड फॉलबैक मैप (Sensex = 20, Nifty = 65, BankNifty = 30)
-    exact_lot_map = {
+    # सटीक 2026 अपडेटेड फॉलबैक मैप
+    fallback_lot_map = {
         "NIFTY": 65,
         "BANKNIFTY": 30,
         "FINNIFTY": 60,
         "SENSEX": 20,
         "MIDCPNIFTY": 120,
+        "NIFTYNXT50": 25,
         "RELIANCE": 500,
-        "TCS": 175,
+        "TCS": 225,
         "SBIN": 750,
-        "HDFCBANK": 550,
+        "HDFCBANK": 650,
         "ICICIBANK": 700,
         "INFY": 400,
         "TATAMOTORS": 1400
     }
-    return exact_lot_map.get(sym_upper, 25)
+    return fallback_lot_map.get(sym_upper, 25)
 
 auto_lot_size = fetch_exact_lot(selected_symbol)
 
@@ -220,7 +219,6 @@ def render_institutional_terminal():
             })
         chain_df = pd.DataFrame(recs)
 
-    # Column Normalization
     strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
     chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
     chain_df.dropna(subset=['Strike'], inplace=True)
@@ -239,7 +237,6 @@ def render_institutional_terminal():
     def norm_cdf(x): return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
     def norm_pdf(x): return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
-    # Advanced Quant Metrics Engine (Greeks, GEX, Vanna, Charm)
     def calculate_advanced_metrics(df, spot, lot):
         r, T = 0.06, 2 / 365.0
         ce_deltas, pe_deltas, gammas, ce_thetas, pe_thetas, vegas = [], [], [], [], [], []
@@ -293,7 +290,6 @@ def render_institutional_terminal():
 
     chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
-    # Strike Filtering
     chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
     if "±5" in strike_range_mode:
         c_idx = chain_df['Dist'].idxmin()
@@ -316,7 +312,6 @@ def render_institutional_terminal():
     pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
     total_net_gex = round(disp_df['CE GEX (Cr)'].sum() + disp_df['PE GEX (Cr)'].sum(), 2)
 
-    # Dashboard Metrics Bar
     st.markdown("---")
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1: st.metric("📌 Asset", selected_symbol)
