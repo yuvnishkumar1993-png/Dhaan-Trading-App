@@ -86,3 +86,29 @@ else:
         st.metric(label="Connection Status", value="Connected 🟢")
     with m3:
         st.metric(label="WebSocket Feed", value="Active ⚡")
+import streamlit as st
+
+# सेशन स्टेट में पहले से वैल्यू चेक करें ताकि री-रन होने पर डिलीट न हों
+if "client_id" not in st.session_state:
+    st.session_state["client_id"] = ""
+
+if "access_token" not in st.session_state:
+    st.session_state["access_token"] = ""
+
+if "is_logged_in" not in st.session_state:
+    st.session_state["is_logged_in"] = False
+
+st.sidebar.markdown("## 🔐 Broker Authentication")
+
+# इनपुट फील्ड्स को सेशन स्टेट से जोड़ें
+client_id_input = st.sidebar.text_input("Client ID", value=st.session_state["client_id"])
+access_token_input = st.sidebar.text_input("Access Token", type="password", value=st.session_state["access_token"])
+
+if st.sidebar.button("Login / Save Credentials"):
+    if client_id_input and access_token_input:
+        st.session_state["client_id"] = client_id_input
+        st.session_state["access_token"] = access_token_input
+        st.session_state["is_logged_in"] = True
+        st.sidebar.success("Credentials Saved Successfully!")
+    else:
+        st.sidebar.error("Please enter both Client ID and Access Token.")
