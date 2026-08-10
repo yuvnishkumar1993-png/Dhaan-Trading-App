@@ -121,3 +121,54 @@ def verify_dhan_credentials(client_id, access_token):
         return False, f"API Error {response.status_code}"
     except Exception as e:
         return False, f"Connection Failed: {str(e)}"
+import requests
+
+class InstitutionalDataEngine:
+    
+    @staticmethod
+    def fetch_historical_candles(access_token, security_id, exchange_segment, instrument, from_date, to_date, interval=None):
+        """
+        Dhan API से ऐतिहासिक (Historical या Intraday) कैंडल डेटा फेच करता है।
+        यदि interval दिया गया है, तो यह Intraday डेटा लाएगा, अन्यथा Daily Historical डेटा लाएगा।
+        """
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'access-token': access_token
+        }
+        
+        # इंटरवल के आधार पर तय करें कि कौन सा एंड-पॉइंट कॉल करना है
+        if interval:
+            url = "https://api.dhan.co/v2/charts/intraday"
+            payload = {
+                "securityId": str(security_id),
+                "exchangeSegment": str(exchange_segment),
+                "instrument": str(instrument),
+                "interval": str(interval),  # जैसे "1", "5", "15", "60"
+                "oi": True,
+                "fromDate": str(from_date),  # फॉर्मेट: "2024-09-11 09:30:00"
+                "toDate": str(to_date)       # फॉर्मेट: "2024-09-15 13:00:00"
+            }
+        else:
+            url = "https://api.dhan.co/v2/charts/historical"
+            payload = {
+                "securityId": str(security_id),
+                "exchangeSegment": str(exchange_segment),
+                "instrument": str(instrument),
+                "expiryCode": 0,
+                "oi": True,
+                "fromDate": str(from_date),  # फॉर्मेट: "2022-01-08"
+                "toDate": str(to_date)       # फॉर्मेट: "2022-02-08"
+            }
+            
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                return response.json() # इसमें open, high, low, close, volume, timestamp मिलेंगे
+            else:
+                print(f"Error fetching historical data: {response.text}")
+                return {}
+        except Exception as e:
+            print(f"API Request Exception: {e}")
+            return {}
+
