@@ -6,6 +6,13 @@ import numpy as np
 import math
 from datetime import datetime, timedelta
 
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
+
 # Page Configuration
 st.set_page_config(
     page_title="Institutional Quant Terminal Pro",
@@ -127,13 +134,12 @@ with col_c2:
     selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="term_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
-# --- 2. EXACT 2026 LOT SIZE AUTO-DETECTION (सेंसेक्स = 20) ---
+# --- 2. EXACT 2026 LOT SIZE AUTO-DETECTION ---
 def fetch_exact_lot(symbol):
     sym_upper = symbol.upper()
     if sym_upper in lot_mapping:
         return lot_mapping[sym_upper]
     
-    # सटीक 2026 अपडेटेड फॉलबैक मैप
     fallback_lot_map = {
         "NIFTY": 65,
         "BANKNIFTY": 30,
@@ -214,8 +220,8 @@ def render_institutional_terminal():
         for st_val in strikes:
             recs.append({
                 "Strike": int(st_val), "STRIKE": int(st_val),
-                "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, live_spot - st_val + 20),
-                "PE_LTP": max(1.0, st_val - live_spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
+                "CE_OI": 500000 + int(np.sin(st_val/100)*200000), "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, live_spot - st_val + 20),
+                "PE_LTP": max(1.0, st_val - live_spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000 + int(np.cos(st_val/100)*200000), "Raw_PE_OI": 600000
             })
         chain_df = pd.DataFrame(recs)
 
@@ -233,6 +239,30 @@ def render_institutional_terminal():
 
     if 'Raw_CE_OI' not in chain_df.columns: chain_df['Raw_CE_OI'] = chain_df.get('CE_OI', chain_df.get('Call_OI', 100000))
     if 'Raw_PE_OI' not in chain_df.columns: chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
+
+    # --- ADVANCED QUANT ANALYTICS (Max Pain & Key Levels) ---
+    def calculate_max_pain(df, spot):
+        strikes = df['Strike'].values
+        ce_oi = df['Raw_CE_OI'].values
+        pe_oi = df['Raw_PE_OI'].values
+        min_payout = float('inf')
+        max_pain_strike = strikes[0]
+        
+        for exp_price in strikes:
+            payout = 0
+            for i, K in enumerate(strikes):
+                if exp_price > K:
+                    payout += (exp_price - K) * ce_oi[i]
+                if exp_price < K:
+                    payout += (K - exp_price) * pe_oi[i]
+            if payout < min_payout:
+                min_payout = payout
+                max_pain_strike = exp_price
+        return int(max_pain_strike)
+
+    max_pain_val = calculate_max_pain(chain_df, live_spot)
+    resistance_strike = int(chain_df.loc[chain_df['Raw_CE_OI'].idxmax()]['Strike']) if not chain_df.empty else live_spot
+    support_strike = int(chain_df.loc[chain_df['Raw_PE_OI'].idxmax()]['Strike']) if not chain_df.empty else live_spot
 
     def norm_cdf(x): return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
     def norm_pdf(x): return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
@@ -290,6 +320,7 @@ def render_institutional_terminal():
 
     chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
+    # Strike Filtering for Display
     chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
     if "±5" in strike_range_mode:
         c_idx = chain_df['Dist'].idxmin()
@@ -308,10 +339,11 @@ def render_institutional_terminal():
 
     atm_row = disp_df.loc[disp_df['Dist'].idxmin()]
     atm_iv = round((atm_row.get('CE_IV', 13.0) + atm_row.get('PE_IV', 13.5)) / 2.0, 2)
-    f_ce_oi, f_pe_oi = disp_df['Raw_CE_OI'].sum(), disp_df['Raw_PE_OI'].sum()
+    f_ce_oi, f_pe_oi = chain_df['Raw_CE_OI'].sum(), chain_df['Raw_PE_OI'].sum()
     pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
-    total_net_gex = round(disp_df['CE GEX (Cr)'].sum() + disp_df['PE GEX (Cr)'].sum(), 2)
+    total_net_gex = round(chain_df['CE GEX (Cr)'].sum() + chain_df['PE GEX (Cr)'].sum(), 2)
 
+    # --- DASHBOARD METRICS BAR ---
     st.markdown("---")
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1: st.metric("📌 Asset", selected_symbol)
@@ -319,8 +351,15 @@ def render_institutional_terminal():
     with m3: st.metric("⚙️ Lot Size", auto_lot_size)
     with m4: st.metric("📊 ATM IV", f"{atm_iv}%")
     with m5: st.metric("⚖️ PCR", pcr_val, delta="Bullish" if pcr_val > 1.0 else "Bearish")
-    with m6: st.metric("⏱️ Updated", datetime.now().strftime("%H:%M:%S"))
+    with m6: st.metric("🎯 Max Pain", max_pain_val)
     st.markdown("---")
+
+    # --- ADVANCED INSTITUTIONAL INSIGHTS EXPANDER ---
+    with st.expander("🔍 Key Institutional Levels & Analytics (Support, Resistance, Max Pain)", expanded=False):
+        col_in1, col_in2, col_in3 = st.columns(3)
+        col_in1.metric("🛡️ Immediate Support (Max Put OI)", support_strike)
+        col_in2.metric("🚧 Immediate Resistance (Max Call OI)", resistance_strike)
+        col_in3.metric("🎯 Expected Settlement (Max Pain)", max_pain_val)
 
     def get_buildup(chg_oi, pct_chg):
         if pct_chg > 0 and chg_oi > 0: return "Short Build"
@@ -398,6 +437,11 @@ def render_institutional_terminal():
 
     st.markdown(f"### 📊 Professional Institutional Option Chain ({strike_range_mode})")
     st.markdown("---")
-    st.dataframe(styled_df, use_container_width=True, height=600, hide_index=True)
+    st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-render_institutional_terminal()
+    # --- 4. VISUAL OI BUILD-UP CHART (Plotly) ---
+    if HAS_PLOTLY:
+        st.markdown("### 📈 Open Interest (OI) Distribution Chart")
+        chart_df = chain_df.tail(30).head(15).copy() # आस-पास के स्ट्राइक्स का विजुअल
+        fig = go.Figure()
+        fig.add_trace(
