@@ -134,7 +134,7 @@ with col_c2:
     selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="term_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
-# --- 2. EXACT 2026 LOT SIZE AUTO-DETECTION ---
+# --- 2. EXACT 2026 LOT SIZE AUTO-DETECTION (सेंसेक्स = 20) ---
 def fetch_exact_lot(symbol):
     sym_upper = symbol.upper()
     if sym_upper in lot_mapping:
@@ -198,32 +198,10 @@ def render_institutional_terminal():
     except Exception:
         chain_df, live_spot = None, 0.0
 
-    if chain_df is None or chain_df.empty:
-        sym_upper = selected_symbol.upper()
-        if "BANKNIFTY" in sym_upper:
-            live_spot = 51500.00
-            strikes = np.arange(50500, 52500, 100)
-        elif "SENSEX" in sym_upper:
-            live_spot = 73525.00
-            strikes = np.arange(72000, 75000, 100)
-        elif "FINNIFTY" in sym_upper:
-            live_spot = 23500.00
-            strikes = np.arange(22500, 24500, 50)
-        elif asset_type == "F&O Stocks" or sym_upper in ["RELIANCE", "TCS", "SBIN", "INFY", "HDFCBANK"]:
-            live_spot = 1500.00
-            strikes = np.arange(1400, 1600, 20)
-        else:
-            live_spot = 24580.00
-            strikes = np.arange(24000, 25000, 50)
-
-        recs = []
-        for st_val in strikes:
-            recs.append({
-                "Strike": int(st_val), "STRIKE": int(st_val),
-                "CE_OI": 500000 + int(np.sin(st_val/100)*200000), "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, live_spot - st_val + 20),
-                "PE_LTP": max(1.0, st_val - live_spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000 + int(np.cos(st_val/100)*200000), "Raw_PE_OI": 600000
-            })
-        chain_df = pd.DataFrame(recs)
+    # केवल असली लाइव डेटा की जाँच (फर्जी डमी डेटा पूरी तरह से हटाया गया)
+    if chain_df is None or chain_df.empty or live_spot <= 0:
+        st.warning(f"⚠️ **{selected_symbol}** के लिए लाइव ऑप्शन चैन डेटा प्राप्त नहीं हो पा रहा है। कृपया अपने Dhan API टोकन/क्रेडेंशियल्स की जाँच करें या बाजार के खुलने का इंतजार करें।")
+        return
 
     strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
     chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
