@@ -1,10 +1,4 @@
-import streamlit as st
-
-def render_backtest():
-    st.header("🧪 Backtesting Engine")
-    st.metric("Win Rate", "68.5%")
-
-if __name__ == import os
+import os
 import sys
 import streamlit as st
 import pandas as pd
@@ -70,10 +64,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("## ⚡ Institutional Quant Terminal Pro")
+st.markdown("## ⚡ Institutional Quant Terminal Pro - Backtest & Analytics")
 st.markdown("---")
 
-# --- 1. PERSISTENT SESSION STATE PROTECTION ---
+# Session State Check
 if "client_id" not in st.session_state:
     st.session_state.client_id = ""
 if "access_token" not in st.session_state:
@@ -82,18 +76,16 @@ if "access_token" not in st.session_state:
 client_id = st.session_state.client_id
 access_token = st.session_state.access_token
 
-# --- 2. LOAD MASTER DATA & ADVANCED SCRIP SELECTOR ---
 @st.cache_data(ttl=3600)
 def get_master_df():
     return InstitutionalDataEngine.load_scrip_master()
 
 master_df = get_master_df()
 
-# 📌 Top Control Panel with Index Selector & Advanced Scrip Selector
 col_c1, col_c2, col_c3, col_c4, col_c5, col_c6 = st.columns([1.4, 1.8, 1.6, 1.5, 1.5, 1.2])
 
 with col_c1:
-    asset_type = st.selectbox("📊 Segment", ["Indices", "F&O Stocks"], key="asset_type_sel")
+    asset_type = st.selectbox("📊 Segment", ["Indices", "F&O Stocks"], key="backtest_asset_type_sel")
 
 with col_c2:
     default_indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"]
@@ -122,10 +114,9 @@ with col_c2:
         available_symbols = default_indices if asset_type == "Indices" else default_stocks
 
     current_idx = available_symbols.index(st.session_state.get("global_symbol", available_symbols[0])) if st.session_state.get("global_symbol", "") in available_symbols else 0
-    selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="page_scrip_sel")
+    selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="backtest_page_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
-# Precise Auto-Detection for Security ID, Segment, and Lot Size
 sec_id, seg, auto_lot_size = 13, "IDX_I", 25
 
 fallback_map = {
@@ -172,25 +163,25 @@ except Exception:
     expiries = [datetime.now().strftime("%Y-%m-%d")]
 
 with col_c3:
-    selected_expiry = st.selectbox("📅 Expiry", expiries, index=0, key=f"exp_{selected_symbol}")
+    selected_expiry = st.selectbox("📅 Expiry", expiries, index=0, key=f"backtest_exp_{selected_symbol}")
 
 with col_c4:
     strike_range_mode = st.selectbox(
         "🎯 Range", 
         ["±5 Strikes", "±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
         index=1,
-        key=f"range_{selected_symbol}"
+        key=f"backtest_range_{selected_symbol}"
     )
 
 with col_c5:
-    show_greeks = st.checkbox("Show Greeks", value=True)
+    show_greeks = st.checkbox("Show Greeks", value=True, key="backtest_greeks")
 
 with col_c6:
-    auto_refresh = st.checkbox("⚡ Live Feed", value=False)
+    auto_refresh = st.checkbox("⚡ Live", value=False, key="backtest_refresh")
     if auto_refresh:
         st.rerun()
 
-# --- 3. FETCH LIVE DATA WITH ASSET-AWARE FALLBACK ---
+# Fetch Data
 is_simulated = False
 try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
@@ -227,7 +218,6 @@ if chain_df is None or chain_df.empty:
         })
     chain_df = pd.DataFrame(recs)
 
-# --- 4. COLUMN NORMALIZATION ---
 strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
@@ -254,7 +244,6 @@ def norm_cdf(x):
 def norm_pdf(x):
     return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
-# --- 5. QUANTITATIVE CALCULATION ENGINE ---
 def calculate_advanced_metrics(df, spot, lot):
     r = 0.06 
     T = 2 / 365.0
@@ -273,11 +262,11 @@ def calculate_advanced_metrics(df, spot, lot):
         
         c_ltp = row.get('CE_LTP', 10.0)
         p_ltp = row.get('PE_LTP', 10.0)
-        c_vol = row.get('CE_Volume', row.get('Call_Volume', 100000))
-        p_vol = row.get('PE_Volume', row.get('Put_Volume', 100000))
+        c_vol = row.get('CE_Volume', 100000)
+        p_vol = row.get('PE_Volume', 100000)
         
-        c_iv = max(5.0, row.get('CE_IV', row.get('Call_IV', 13.0))) / 100.0
-        p_iv = max(5.0, row.get('PE_IV', row.get('Put_IV', 13.5))) / 100.0
+        c_iv = max(5.0, row.get('CE_IV', 13.0)) / 100.0
+        p_iv = max(5.0, row.get('PE_IV', 13.5)) / 100.0
         sigma = (c_iv + p_iv) / 2.0
         
         try:
@@ -339,7 +328,6 @@ def calculate_advanced_metrics(df, spot, lot):
 
 chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
-# Strike filtering
 chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
 if "±5" in strike_range_mode:
     center_idx = chain_df['Dist'].idxmin()
@@ -357,14 +345,13 @@ else:
     disp_df = chain_df.copy()
 
 atm_row = disp_df.loc[disp_df['Dist'].idxmin()]
-atm_iv = round((atm_row.get('CE_IV', atm_row.get('Call_IV', 13.0)) + atm_row.get('PE_IV', atm_row.get('Put_IV', 13.5))) / 2.0, 2)
+atm_iv = round((atm_row.get('CE_IV', 13.0) + atm_row.get('PE_IV', 13.5)) / 2.0, 2)
 
 f_ce_oi = disp_df['Raw_CE_OI'].sum()
 f_pe_oi = disp_df['Raw_PE_OI'].sum()
 pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
 total_net_gex = round(disp_df['CE GEX (Cr)'].sum() + disp_df['PE GEX (Cr)'].sum(), 2)
 
-# --- 6. SUPER DASHBOARD METRIC BAR ---
 st.markdown("---")
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 with m1: st.metric("📌 Asset", selected_symbol)
@@ -375,55 +362,31 @@ with m5: st.metric("⚖️ PCR Ratio", pcr_val, delta="Bullish" if pcr_val > 1.0
 with m6: st.metric("🌊 Net GEX", f"{total_net_gex} Cr")
 st.markdown("---")
 
-# --- 7. VISUAL ANALYTICS & EXPORT TOOLS ---
-with st.expander("📈 Visual OI & Analytics Chart", expanded=False):
-    if HAS_PLOTLY:
-        chart_df = disp_df[['Strike', 'Raw_CE_OI', 'Raw_PE_OI']].copy()
-        chart_df['Call OI (L)'] = chart_df['Raw_CE_OI'] / 100000
-        chart_df['Put OI (L)'] = chart_df['Raw_PE_OI'] / 100000
-        
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Call OI (L)'], name='Call OI (L)', marker_color='#ef4444'))
-        fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Put OI (L)'], name='Put OI (L)', marker_color='#22c55e'))
-        fig.update_layout(
-            barmode='group',
-            title=f"{selected_symbol} Open Interest Distribution by Strike",
-            xaxis_title="Strike Price",
-            yaxis_title="Open Interest (Lakhs)",
-            template="plotly_dark",
-            height=400
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Install Plotly for visual charts.")
-
-# CSV Download Button
 csv_data = disp_df.to_csv(index=False).encode('utf-8')
 st.download_button(
-    label="📥 Download Option Chain Snapshot (CSV)",
+    label="📥 Download Snapshot (CSV)",
     data=csv_data,
-    file_name=f"{selected_symbol}_{selected_expiry}_option_chain.csv",
+    file_name=f"{selected_symbol}_{selected_expiry}_backtest.csv",
     mime="text/csv"
 )
 
-# Buildup helper
 def get_buildup(chg_oi, pct_chg):
     if pct_chg > 0 and chg_oi > 0: return "Short Build"
     elif pct_chg < 0 and chg_oi < 0: return "Long Unwind"
     elif pct_chg > 0 and chg_oi < 0: return "Short Cover"
     return "Long Build"
 
-disp_df['CE Build'] = disp_df.apply(lambda r: get_buildup(r.get('CE_Chg_OI', r.get('Call_Chg_OI', 0)), r.get('CE_%Chg', 0)), axis=1)
-disp_df['PE Build'] = disp_df.apply(lambda r: get_buildup(r.get('PE_Chg_OI', r.get('Put_Chg_OI', 0)), r.get('PE_%Chg', 0)), axis=1)
+disp_df['CE Build'] = disp_df.apply(lambda r: get_buildup(r.get('CE_Chg_OI', 0), r.get('CE_%Chg', 0)), axis=1)
+disp_df['PE Build'] = disp_df.apply(lambda r: get_buildup(r.get('PE_Chg_OI', 0), r.get('PE_%Chg', 0)), axis=1)
 
 disp_df['STRIKE'] = disp_df['Strike']
 disp_df['CE OI (L)'] = round(disp_df['Raw_CE_OI'] / 100000, 2)
 disp_df['PE OI (L)'] = round(disp_df['Raw_PE_OI'] / 100000, 2)
-disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', disp_df.get('Call_Volume', 100000)) / 1000000, 2)
-disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', disp_df.get('Put_Volume', 100000)) / 1000000, 2)
+disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', 100000) / 1000000, 2)
+disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', 100000) / 1000000, 2)
 
-disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', disp_df.get('Call_Chg_OI', 0))
-disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', disp_df.get('Put_Chg_OI', 0))
+disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', 0)
+disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', 0)
 disp_df['CE OI Chg %'] = disp_df.get('CE_%Chg', 0.0)
 disp_df['PE OI Chg %'] = disp_df.get('PE_%Chg', 0.0)
 
@@ -435,7 +398,6 @@ disp_df['PE Ask'] = round(disp_df['PE_LTP'] * 1.01, 2)
 disp_df['CE Spread %'] = np.where(disp_df['CE_LTP'] > 0, round(((disp_df['CE Ask'] - disp_df['CE Bid']) / disp_df['CE_LTP']) * 100, 2), 0.0)
 disp_df['PE Spread %'] = np.where(disp_df['PE_LTP'] > 0, round(((disp_df['PE Ask'] - disp_df['PE Bid']) / disp_df['PE_LTP']) * 100, 2), 0.0)
 
-# --- 8. MATRIX LAYOUT ---
 if show_greeks:
     matrix_cols = [
         "CE Build", "CE GEX (Cr)", "CE Charm", "CE Vanna", "CE Vega", "CE Theta", "Gamma", "CE Delta",
@@ -468,7 +430,6 @@ matrix_df = matrix_df.loc[:, ~matrix_df.columns.duplicated()]
 
 atm_strike_val = round(live_spot / 50) * 50
 
-# --- 9. PROFESSIONAL STYLING FUNCTION ---
 def professional_terminal_styling(row):
     strike = row['STRIKE']
     styles = [''] * len(row)
@@ -513,8 +474,6 @@ def professional_terminal_styling(row):
 
 styled_df = matrix_df.style.apply(professional_terminal_styling, axis=1)
 
-st.markdown(f"### 📊 Professional Institutional Option Chain Terminal ({strike_range_mode})")
+st.markdown(f"### 📊 Institutional Backtest & Historical Analytics Terminal ({strike_range_mode})")
 st.markdown("---")
 st.dataframe(styled_df, use_container_width=True, height=650, hide_index=True)
-main__":
-    render_backtest()
