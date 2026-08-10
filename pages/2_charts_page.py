@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
-from backend import get_market_data
+from dhan_api import get_market_data
 
 # Page Configuration
 st.set_page_config(
@@ -30,13 +30,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Fetch Market Data safely
+# Fetch Market Data safely from dhan_api.py
 asset = st.session_state.get("selected_asset", "SENSEX")
 try:
     spot, chain_df, _, _, _ = get_market_data(asset)
 except Exception as e:
     st.error(f"Failed to load market data: {e}")
-    # Fallback dummy data if backend fails
+    # Fallback dummy data if API fails
     spot = 74000
     chain_df = pd.DataFrame({
         'strike': [73500, 73800, 74000, 74200, 74500],
