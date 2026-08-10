@@ -69,7 +69,7 @@ if "access_token" not in st.session_state:
 client_id = st.session_state.client_id
 access_token = st.session_state.access_token
 
-# --- 2. LOAD MASTER DATA & AUTO-DETECT LOT SIZE ACCURATELY ---
+# --- 2. LOAD MASTER DATA & AUTO-DETECT SECURITY ID ACCURATELY ---
 @st.cache_data(ttl=3600)
 def get_master_df():
     return InstitutionalDataEngine.load_scrip_master()
@@ -98,10 +98,7 @@ with col_c1:
     selected_symbol = st.selectbox("📌 Asset", popular_symbols, index=current_idx, key="page_asset_sel")
     st.session_state.global_symbol = selected_symbol
 
-# Precise Auto-Detection for Security ID, Segment, and Lot Size
-sec_id, seg, auto_lot_size = 13, "IDX_I", 65
-
-# --- OFFICIAL EXTREMELY ACCURATE FALLBACK MAP (SENSEX = 20 & CSV Mapped) ---
+# Standard Exchange Lot Size Map (Fixed & Accurate: SENSEX = 20)
 fallback_map = {
     "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 65},
     "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 30},
@@ -115,12 +112,12 @@ fallback_map = {
 cfg = fallback_map.get(selected_symbol.upper(), {"sec_id": 13, "seg": "IDX_I", "lot": 65})
 sec_id, seg, auto_lot_size = cfg["sec_id"], cfg["seg"], cfg["lot"]
 
+# मास्टर CSV से केवल Security ID और Segment लेंगे, Lot Size फिक्स रहेगा ताकि गलत वैल्यु न आए
 if not master_df.empty and symbol_col:
     match_row = master_df[master_df[symbol_col] == selected_symbol.upper()]
     if not match_row.empty:
         seg_col = next((c for c in ['SEM_EXCH_SEGMENT', 'EXCH_SEGMENT', 'SEGMENT'] if c in match_row.columns), None)
         id_col = next((c for c in ['SEM_SMST_SECURITY_ID', 'SECURITY_ID', 'SEM_SECURITY_ID'] if c in match_row.columns), None)
-        lot_col = next((c for c in ['SEM_LOT_UNITS', 'LOT_SIZE', 'LOT_UNITS'] if c in match_row.columns), None)
         
         target_row = match_row.iloc[0]
         if seg_col:
@@ -132,10 +129,6 @@ if not master_df.empty and symbol_col:
             sec_id = int(target_row.get(id_col, sec_id))
         if seg_col:
             seg = str(target_row.get(seg_col, seg))
-        if lot_col:
-            val_lot = target_row.get(lot_col, auto_lot_size)
-            if pd.notnull(val_lot) and int(val_lot) > 0:
-                auto_lot_size = int(val_lot)
 
 try:
     expiries = InstitutionalDataEngine.fetch_expiries(client_id, access_token, sec_id, seg)
@@ -335,7 +328,7 @@ st.markdown("---")
 m1, m2, m3, m4 = st.columns(4)
 with m1: st.metric("Underlying Asset", selected_symbol)
 with m2: st.metric("Live Spot Price", f"₹{live_spot:,.2f}")
-with m3: st.metric("Auto-Detected Lot Size", auto_lot_size)
+with m3: st.metric("Lot Size", auto_lot_size)  # यहाँ नाम साफ-सुथरा 'Lot Size' कर दिया गया है
 with m4: st.metric("Put-Call Ratio (PCR)", pcr_val)
 st.markdown("---")
 
