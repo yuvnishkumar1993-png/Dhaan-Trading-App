@@ -1,18 +1,17 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import math
 import time
 from datetime import datetime
 
 # Page Config
 st.set_page_config(page_title="Quant Terminal", layout="wide")
 
-# Persistent Session Protection (लॉगिन सुरक्षित रखने के लिए)
+# Persistent Session Protection
 if "client_id" not in st.session_state: st.session_state.client_id = ""
 if "access_token" not in st.session_state: st.session_state.access_token = ""
 
-# Data Engine (Optimized & Cached)
+# Data Engine (Optimized & Safe Cache)
 @st.cache_data(ttl=3600)
 def load_master_data():
     try:
@@ -20,36 +19,59 @@ def load_master_data():
         df = pd.read_csv(url, low_memory=False)
         df.columns = [str(col).strip().upper() for col in df.columns]
         return df
-    except: return pd.DataFrame()
+    except: 
+        return pd.DataFrame()
 
 master_df = load_master_data()
 
-st.title("⚡ Institutional Quant Terminal Pro")
+st.title("⚡ Institutional Quant Terminal Pro - Backtest")
 
-# --- 1. SMART ASSET & SCRIP SELECTOR ---
+# --- 1. SAFE SMART ASSET & SCRIP SELECTOR ---
 col1, col2 = st.columns(2)
 with col1:
-    asset_type = st.selectbox("Segment", ["Indices", "F&O Stocks"])
+    asset_type = st.selectbox("Segment", ["Indices", "F&O Stocks"], key="bk_seg")
+
 with col2:
-    if not master_df.empty:
-        if asset_type == "Indices":
-            syms = master_df[master_df['SEM_EXCH_SEGMENT'].isin(['IDX_I', 'BSE_IDX'])]['SEM_TRADING_SYMBOL'].unique()
-        else:
-            syms = master_df[master_df['SEM_EXCH_SEGMENT'].isin(['NSE_EQ'])]['SEM_TRADING_SYMBOL'].unique()
-        selected_symbol = st.selectbox("Search Symbol", options=syms)
-    else:
-        selected_symbol = st.text_input("Enter Symbol", "NIFTY")
+    default_indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"]
+    default_stocks = ["RELIANCE", "TCS", "SBIN", "INFY", "HDFCBANK", "ICICIBANK", "TATAMOTORS"]
+    
+    # सुरक्षित कॉलम पहचान (Safe Column Mapping)
+    seg_col = next((c for c in ['SEM_EXCH_SEGMENT', 'EXCH_SEGMENT', 'SEGMENT'] if c in master_df.columns), None)
+    sym_col = next((c for c in ['SEM_TRADING_SYMBOL', 'TRADING_SYMBOL', 'SYMBOL'] if c in master_df.columns), None)
+    
+    syms = []
+    if not master_df.empty and seg_col and sym_col:
+        try:
+            if asset_type == "Indices":
+                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['IDX_I', 'BSE_IDX'])]
+            else:
+                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['NSE_EQ', 'BSE_EQ'])]
+            syms = sub_df[sym_col].dropna().unique().tolist()
+        except:
+            syms = []
+            
+    if not syms:
+        syms = default_indices if asset_type == "Indices" else default_stocks
 
-# --- 2. AUTO-DETECT LOT SIZE & PARAMETERS ---
+    selected_symbol = st.selectbox("Search Symbol", options=syms, key="bk_sym")
+
+# --- 2. AUTO-DETECT LOT SIZE & PARAMETERS SAFELY ---
 auto_lot = 25
-if not master_df.empty and selected_symbol in master_df['SEM_TRADING_SYMBOL'].values:
-    row = master_df[master_df['SEM_TRADING_SYMBOL'] == selected_symbol].iloc[0]
-    auto_lot = int(row.get('SEM_LOT_UNITS', 25))
+lot_col = next((c for c in ['SEM_LOT_UNITS', 'LOT_SIZE', 'LOT_UNITS'] if c in master_df.columns), None)
 
-# --- 3. DATA FETCHING (API + FALLBACK) ---
-def get_data(sym):
-    # यहाँ आप अपनी InstitutionalDataEngine.fetch_live_option_chain डाल सकते हैं
-    # अभी टेस्टिंग के लिए सिम्युलेटेड डेटा है ताकि हैंग न हो
+if not master_df.empty and sym_col and lot_col:
+    match_row = master_df[master_df[sym_col] == str(selected_symbol).upper()]
+    if not match_row.empty:
+        val_lot = match_row.iloc[0].get(lot_col, auto_lot)
+        if pd.notnull(val_lot) and int(val_lot) > 0:
+            auto_lot = int(val_lot)
+else:
+    # डिफॉल्ट लॉट साइज मैप
+    lot_map = {"NIFTY": 25, "BANKNIFTY": 15, "FINNIFTY": 25, "SENSEX": 10, "RELIANCE": 250, "TCS": 175, "SBIN": 750}
+    auto_lot = lot_map.get(selected_symbol.upper(), 25)
+
+# --- 3. DATA FETCHING (SIMULATED / BACKTEST ENGINE) ---
+def get_backtest_data(sym):
     strikes = np.arange(24000, 25000, 50)
     df = pd.DataFrame({
         "Strike": strikes,
@@ -60,7 +82,7 @@ def get_data(sym):
     })
     return df, 24580.0
 
-df, spot = get_data(selected_symbol)
+df, spot = get_backtest_data(selected_symbol)
 
 # --- 4. ANALYTICS & DASHBOARD ---
 st.markdown("---")
@@ -74,6 +96,6 @@ st.markdown("---")
 st.dataframe(df, use_container_width=True)
 
 # --- 6. AUTO-REFRESH (Throttled) ---
-if st.checkbox("Live Refresh (3s)"):
+if st.checkbox("Live Refresh (3s)", key="bk_refresh"):
     time.sleep(3)
     st.rerun()
