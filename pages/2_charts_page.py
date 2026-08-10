@@ -196,6 +196,10 @@ def render_institutional_terminal():
     strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
     chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
     chain_df.dropna(subset=['Strike'], inplace=True)
+    
+    # स्ट्राइक के आधार पर सॉर्ट करना अनिवार्य है
+    chain_df.sort_values(by='Strike', inplace=True)
+    chain_df.reset_index(drop=True, inplace=True)
 
     if 'CE_LTP' not in chain_df.columns and 'Call_LTP' in chain_df.columns:
         chain_df['CE_LTP'] = chain_df['Call_LTP']
@@ -212,28 +216,26 @@ def render_institutional_terminal():
     resistance_strike = int(chain_df.loc[chain_df['Raw_CE_OI'].idxmax()]['Strike']) if not chain_df.empty else live_spot
     support_strike = int(chain_df.loc[chain_df['Raw_PE_OI'].idxmax()]['Strike']) if not chain_df.empty else live_spot
 
-    # Call utility function for advanced metrics
+    # Call utility function for advanced metrics (यहीं से सारे ग्रीक्स जुड़ेंगे)
     chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
     # Strike Filtering for Display
     chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
+    c_idx = chain_df['Dist'].idxmin() if not chain_df.empty else 0
+    
     if "±5" in strike_range_mode:
-        c_idx = chain_df['Dist'].idxmin()
         disp_df = chain_df.iloc[max(0, c_idx-5):min(len(chain_df), c_idx+6)].copy()
     elif "±10" in strike_range_mode:
-        c_idx = chain_df['Dist'].idxmin()
         disp_df = chain_df.iloc[max(0, c_idx-10):min(len(chain_df), c_idx+11)].copy()
     elif "±20" in strike_range_mode:
-        c_idx = chain_df['Dist'].idxmin()
         disp_df = chain_df.iloc[max(0, c_idx-20):min(len(chain_df), c_idx+21)].copy()
     elif "±30" in strike_range_mode:
-        c_idx = chain_df['Dist'].idxmin()
         disp_df = chain_df.iloc[max(0, c_idx-30):min(len(chain_df), c_idx+31)].copy()
     else:
         disp_df = chain_df.copy()
 
-    atm_row = disp_df.loc[disp_df['Dist'].idxmin()]
-    atm_iv = round((atm_row.get('CE_IV', 13.0) + atm_row.get('PE_IV', 13.5)) / 2.0, 2)
+    atm_row = disp_df.loc[disp_df['Dist'].idxmin()] if not disp_df.empty else chain_df.iloc[c_idx]
+    atm_iv = round((float(atm_row.get('CE_IV', 13.0)) + float(atm_row.get('PE_IV', 13.5))) / 2.0, 2)
     f_ce_oi, f_pe_oi = chain_df['Raw_CE_OI'].sum(), chain_df['Raw_PE_OI'].sum()
     pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
 
@@ -329,7 +331,10 @@ def render_institutional_terminal():
     # --- 4. VISUAL OI BUILD-UP CHART (Plotly) ---
     if HAS_PLOTLY:
         st.markdown("### 📈 Open Interest (OI) Distribution Chart")
-        chart_df = chain_df.tail(30).head(15).copy()
+        # ATM के आस-पास के 15 स्ट्राइक्स का डायनामिक चार्ट
+        c_idx_full = chain_df['Dist'].idxmin() if not chain_df.empty else 0
+        chart_df = chain_df.iloc[max(0, c_idx_full-7):min(len(chain_df), c_idx_full+8)].copy()
+        
         fig = go.Figure()
         fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Raw_CE_OI'], name='Call OI (Resistance)', marker_color='#ef4444'))
         fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Raw_PE_OI'], name='Put OI (Support)', marker_color='#22c55e'))
