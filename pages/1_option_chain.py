@@ -37,18 +37,9 @@ except ImportError:
             return [datetime.now().strftime("%Y-%m-%d")]
         @staticmethod
         def fetch_live_option_chain(c, a, s, seg, exp, sym):
-            spot = 24583.80
-            strikes = np.arange(24000, 25200, 50)
-            recs = []
-            for st_val in strikes:
-                recs.append({
-                    "Strike": int(st_val), "STRIKE": int(st_val),
-                    "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot - st_val + 20),
-                    "PE_LTP": max(1.0, st_val - spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
-                })
-            return pd.DataFrame(recs), spot
+            return None, 0.0
 
-# Professional Institutional Styling Injection
+# Professional Styling Injection
 st.markdown("""
 <style>
     .main { background-color: #0e1117; color: #f8fafc; }
@@ -89,7 +80,7 @@ col_c1, col_c2, col_c3, col_c4 = st.columns([2, 2, 2.5, 2])
 with col_c1:
     default_symbols = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "RELIANCE", "TCS", "SBIN"]
     symbol_col = None
-    for c in ['SEM_TRADING_SYMBOL', 'TRADING_SYMBOL', 'SYMBOL', 'SEM_CUSTOM_SYMBOL']:
+    for c in ['SEM_TRADING_SYMBOL', 'TRADING_SYMBOL', 'SYMBOL']:
         if not master_df.empty and c in master_df.columns:
             symbol_col = c
             break
@@ -106,13 +97,12 @@ with col_c1:
     selected_symbol = st.selectbox("📌 Asset Underlying", popular_symbols, index=current_idx, key="page_asset_sel")
     st.session_state.global_symbol = selected_symbol
 
-# Safe Auto-Detection without KeyError
+# Safe Auto-Detection from Master Data
 sec_id, seg, auto_lot_size = 13, "IDX_I", 25
 
 if not master_df.empty and symbol_col:
     match_row = master_df[master_df[symbol_col] == selected_symbol]
     if not match_row.empty:
-        # सेगमेंट कॉलम ढूंढना
         seg_col = next((c for c in ['SEM_EXCH_SEGMENT', 'EXCH_SEGMENT', 'SEGMENT'] if c in match_row.columns), None)
         id_col = next((c for c in ['SEM_SMST_SECURITY_ID', 'SECURITY_ID', 'SEM_SECURITY_ID'] if c in match_row.columns), None)
         lot_col = next((c for c in ['SEM_LOT_UNITS', 'LOT_SIZE', 'LOT_UNITS'] if c in match_row.columns), None)
@@ -160,29 +150,48 @@ with col_c3:
 with col_c4:
     show_greeks = st.checkbox("Show Advanced Quant Greeks", value=True)
 
-# --- 2. FETCH LIVE OPTION CHAIN DATA ---
+# --- 2. FETCH LIVE OPTION CHAIN DATA WITH ASSET-AWARE FALLBACK ---
+is_simulated = False
 try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
         client_id, access_token, sec_id, seg, selected_expiry, selected_symbol
     )
 except Exception:
     chain_df = pd.DataFrame()
-    live_spot = 24583.80
+    live_spot = 0.0
 
 if chain_df is None or chain_df.empty:
-    spot_val = 24583.80
-    strikes = np.arange(24000, 25200, 50)
+    is_simulated = True
+    # Asset-Specific Realistic Simulation ranges so numbers never mix up
+    if "BANKNIFTY" in selected_symbol.upper():
+        live_spot = 51500.00
+        strikes = np.arange(50000, 53000, 100)
+    elif "SENSEX" in selected_symbol.upper():
+        live_spot = 81000.00
+        strikes = np.arange(79000, 83000, 100)
+    elif "FINNIFTY" in selected_symbol.upper():
+        live_spot = 23500.00
+        strikes = np.arange(22500, 24500, 50)
+    elif selected_symbol.upper() in ["RELIANCE", "TCS", "SBIN"]:
+        live_spot = 3000.00
+        strikes = np.arange(2800, 3200, 20)
+    else: # NIFTY default
+        live_spot = 24583.80
+        strikes = np.arange(24000, 25200, 50)
+
     recs = []
     for st_val in strikes:
         recs.append({
             "Strike": int(st_val), "STRIKE": int(st_val),
-            "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot_val - st_val + 20),
-            "PE_LTP": max(1.0, st_val - spot_val + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
+            "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, live_spot - st_val + 20),
+            "PE_LTP": max(1.0, st_val - live_spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
         })
     chain_df = pd.DataFrame(recs)
-    live_spot = spot_val
 
-# --- 3. ROBUST COLUMN NORMALIZATION ---
+if is_simulated:
+    st.warning("⚠️ **Live API Connection Notice:** Live option chain data couldn't be fetched (check credentials or market hours). Displaying asset-specific simulation grid for testing.")
+
+# --- 3. COLUMN NORMALIZATION ---
 strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
@@ -203,7 +212,6 @@ if 'Raw_CE_OI' not in chain_df.columns:
 if 'Raw_PE_OI' not in chain_df.columns:
     chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
 
-# Math Helper functions for Normal CDF and PDF
 def norm_cdf(x):
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
@@ -312,7 +320,6 @@ elif "±30" in strike_range_mode:
 else:
     disp_df = chain_df.copy()
 
-# Summary Metrics Bar Calculations
 atm_row = disp_df.loc[disp_df['Dist'].idxmin()]
 atm_iv = round((atm_row.get('CE_IV', atm_row.get('Call_IV', 13.0)) + atm_row.get('PE_IV', atm_row.get('Put_IV', 13.5))) / 2.0, 2)
 
@@ -332,7 +339,6 @@ with m5: st.metric("⚖️ PCR Ratio", pcr_val, delta="Bullish" if pcr_val > 1.0
 with m6: st.metric("🌊 Net GEX", f"{total_net_gex} Cr")
 st.markdown("---")
 
-# Buildup helper
 def get_buildup(chg_oi, pct_chg):
     if pct_chg > 0 and chg_oi > 0: return "Short Build"
     elif pct_chg < 0 and chg_oi < 0: return "Long Unwind"
@@ -394,7 +400,6 @@ matrix_df = matrix_df.loc[:, ~matrix_df.columns.duplicated()]
 
 atm_strike_val = round(live_spot / 50) * 50
 
-# --- 7. STYLING FUNCTION ---
 def professional_terminal_styling(row):
     strike = row['STRIKE']
     styles = [''] * len(row)
