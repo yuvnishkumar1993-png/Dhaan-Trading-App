@@ -444,4 +444,17 @@ def render_institutional_terminal():
         st.markdown("### 📈 Open Interest (OI) Distribution Chart")
         chart_df = chain_df.tail(30).head(15).copy()
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=chart_df['Strike'], y=ch
+        fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Raw_CE_OI'], name='Call OI (Resistance)', marker_color='#ef4444'))
+        fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Raw_PE_OI'], name='Put OI (Support)', marker_color='#22c55e'))
+        fig.update_layout(
+            barmode='group',
+            plot_bgcolor='#0e1117',
+            paper_bgcolor='#0e1117',
+            font=dict(color='#f8fafc'),
+            xaxis_title="Strike Price",
+            yaxis_title="Open Interest",
+            legend=dict(x=0, y=1.1, orientation="h")
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+render_institutional_terminal()
