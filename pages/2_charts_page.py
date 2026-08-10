@@ -48,7 +48,8 @@ except ImportError:
 try:
     from quant_utils import calculate_advanced_metrics, calculate_max_pain
 except ImportError:
-    pass
+    def calculate_advanced_metrics(df, spot, lot): return df
+    def calculate_max_pain(df, spot): return int(spot)
 
 st.markdown("""
 <style>
@@ -73,19 +74,49 @@ def get_master_df():
 
 master_df = get_master_df()
 
-col_c1, col_c2, col_c3, col_c4 = st.columns([2, 2, 2.5, 2])
+col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns([1.5, 1.8, 1.8, 2, 1.5])
 
 with col_c1:
+    asset_type = st.selectbox("📊 Segment", ["Indices", "F&O Stocks"], key="term_seg_sel")
+
+with col_c2:
     default_indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"]
+    default_stocks = ["RELIANCE", "TCS", "SBIN", "INFY", "HDFCBANK", "ICICIBANK", "TATAMOTORS"]
+    
+    seg_col = next((c for c in ['SEM_EXCH_SEGMENT', 'EXCH_SEGMENT', 'SEGMENT'] if not master_df.empty and c in master_df.columns), None)
     sym_col = next((c for c in ['SEM_TRADING_SYMBOL', 'TRADING_SYMBOL', 'SYMBOL'] if not master_df.empty and c in master_df.columns), None)
-    available_symbols = master_df[sym_col].dropna().unique().tolist() if sym_col else default_indices
+    
+    available_symbols = []
+    if not master_df.empty and seg_col and sym_col:
+        try:
+            if asset_type == "Indices":
+                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['IDX_I', 'BSE_IDX', 'BSE_FO', 'NSE_FO'])]
+            else:
+                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['NSE_EQ', 'NSE_FO'])]
+            
+            raw_syms = sub_df[sym_col].dropna().unique().tolist()
+            
+            # हैंग होने से बचाने के लिए फालतू फ्यूचर्स और करेंसी कॉन्ट्रैक्ट्स को फिल्टर करना
+            clean_syms = set()
+            for s in raw_syms:
+                s_up = str(s).upper()
+                if not any(x in s_up for x in ["FUT", "CE", "PE", "-", "2024", "2025", "2026"]):
+                    if len(s_up) <= 15:
+                        clean_syms.add(s_up)
+            
+            available_symbols = sorted(list(clean_syms))
+        except Exception:
+            available_symbols = []
+            
+    if not available_symbols or len(available_symbols) > 500:
+        available_symbols = default_indices if asset_type == "Indices" else default_stocks
+
     current_idx = available_symbols.index(st.session_state.get("global_symbol", available_symbols[0])) if st.session_state.get("global_symbol", "") in available_symbols else 0
-    selected_symbol = st.selectbox("📌 Asset Selector", available_symbols, index=current_idx, key="quant_sym_sel")
+    selected_symbol = st.selectbox("🔍 Scrip", available_symbols, index=current_idx, key="term_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
 auto_lot_size = 25
 sec_id, seg = 13, "IDX_I"
-seg_col = next((c for c in ['SEM_EXCH_SEGMENT', 'EXCH_SEGMENT', 'SEGMENT'] if not master_df.empty and c in master_df.columns), None)
 if not master_df.empty and sym_col:
     match_row = master_df[master_df[sym_col] == selected_symbol.upper()]
     if not match_row.empty:
@@ -99,18 +130,17 @@ try:
 except Exception:
     expiries = [datetime.now().strftime("%Y-%m-%d")]
 
-with col_c2:
+with col_c3:
     selected_expiry = st.selectbox("📅 Expiry", expiries, index=0, key=f"quant_exp_{selected_symbol}")
 
-with col_c3:
+with col_c4:
     strike_range_mode = st.selectbox("🎯 Range", ["±5 Strikes", "±10 Strikes", "±20 Strikes", "Full Chain (All)"], index=1, key=f"quant_range_{selected_symbol}")
 
-with col_c4:
-    show_greeks = st.checkbox("Show Quant Metrics", value=True)
+with col_c5:
+    show_greeks = st.checkbox("Greeks", value=True)
 
-# Detect if selected symbol is a Future
 if "FUT" in selected_symbol.upper():
-    st.warning(f"⚠️ **{selected_symbol}** एक Futures कॉन्ट्रैक्ट है। ऑप्शन चेन और क्वांट चार्ट्स देखने के लिए कृपया कोई Index या F&O Stock (ऑप्शन वाला सिंबल) चुनें।")
+    st.warning(f"⚠️ **{selected_symbol}** एक Futures कॉन्ट्रैक्ट है। ऑप्शन चेन देखने के लिए कृपया कोई Index या Stock चुनें।")
 
 try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
@@ -166,6 +196,6 @@ st.plotly_chart(fig_a, use_container_width=True)
 st.markdown("##### [MOD B] Net Gamma Exposure (GEX)")
 fig_b = go.Figure()
 fig_b.add_trace(go.Bar(x=strike_str_list, y=disp_df.get('CE GEX (Cr)', 0), name='CE GEX', marker_color='#38bdf8'))
-fig_b.add_trace(go.Bar(x=strike_str_list, y=disp_df.get('PE GEX (Cr)', 0), name='PE GEX', marker_color='#c084fc'))
+fig_b.add_trace(go.Bar(x=strike_str_list, y=disp_df['PE GEX (Cr)', 0], name='PE GEX', marker_color='#c084fc'))
 fig_b.update_layout(**sensibull_layout, barmode="group")
 st.plotly_chart(fig_b, use_container_width=True)
