@@ -7,7 +7,7 @@ from datetime import datetime
 class InstitutionalDataEngine:
     """
     Quant Terminal Pro के लिए Advanced Data Pipeline और Caching Engine.
-    Dhan API से लाइव ऑप्शन चैन, एक्सपायरी और ग्रीक्स फेच करने का वेरीफाइड इंजन।
+    Dhan API से लाइव ऑप्शन चैन, एक्सपायरी, ग्रीक्स और हिस्टोरिकल डेटा फेच करने का वेरीफाइड इंजन।
     """
     
     @staticmethod
@@ -50,7 +50,7 @@ class InstitutionalDataEngine:
     @staticmethod
     @st.cache_data(ttl=10)
     def fetch_live_option_chain(client_id, access_token, sec_id, seg, exp, symbol):
-        """Real-time option chain data fetch करता है। यदि क्रेडेंशियल्स न हों तो खाली डेटा लौटाता है (फर्जी डेटा नहीं)।"""
+        """Real-time option chain data fetch करता है। यदि क्रेडेंशियल्स न हों तो खाली डेटा लौटाता है।"""
         if not client_id or not access_token:
             return pd.DataFrame(), 0.0
 
@@ -109,22 +109,6 @@ class InstitutionalDataEngine:
             
         return pd.DataFrame(), 0.0
 
-def verify_dhan_credentials(client_id, access_token):
-    url = "https://api.dhan.co/v2/holdings"
-    headers = {"access-token": access_token.strip(), "client-id": client_id.strip(), "Content-Type": "application/json"}
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            return True, "Success"
-        elif response.status_code == 401:
-            return False, "Token Expired or Invalid"
-        return False, f"API Error {response.status_code}"
-    except Exception as e:
-        return False, f"Connection Failed: {str(e)}"
-import requests
-
-class InstitutionalDataEngine:
-    
     @staticmethod
     def fetch_historical_candles(access_token, security_id, exchange_segment, instrument, from_date, to_date, interval=None):
         """
@@ -134,7 +118,7 @@ class InstitutionalDataEngine:
         headers = {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
-            'access-token': access_token
+            'access-token': access_token.strip() if access_token else ''
         }
         
         # इंटरवल के आधार पर तय करें कि कौन सा एंड-पॉइंट कॉल करना है
@@ -162,7 +146,7 @@ class InstitutionalDataEngine:
             }
             
         try:
-            response = requests.post(url, json=payload, headers=headers)
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
             if response.status_code == 200:
                 return response.json() # इसमें open, high, low, close, volume, timestamp मिलेंगे
             else:
@@ -172,3 +156,16 @@ class InstitutionalDataEngine:
             print(f"API Request Exception: {e}")
             return {}
 
+def verify_dhan_credentials(client_id, access_token):
+    """दिए गए Dhan Client ID और Access Token को वेरीफाई करता है।"""
+    url = "https://api.dhan.co/v2/holdings"
+    headers = {"access-token": access_token.strip(), "client-id": client_id.strip(), "Content-Type": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            return True, "Success"
+        elif response.status_code == 401:
+            return False, "Token Expired or Invalid"
+        return False, f"API Error {response.status_code}"
+    except Exception as e:
+        return False, f"Connection Failed: {str(e)}"
