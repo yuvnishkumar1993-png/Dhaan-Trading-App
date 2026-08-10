@@ -11,8 +11,8 @@ def norm_pdf(x):
 
 def fetch_available_expiries(client_id, access_token, sec_id, seg):
     """
-    असली Dhan API या फॉलबैक से एक्सपायरी डेट्स फेच करता है 
-    और उन्हें हमेशा पास से दूर (सॉर्टेड) व्यवस्थित करता है।
+    Dhan API या फॉलबैक से एक्सपायरी डेट्स फेच करता है 
+    और उन्हें सबसे पास से दूर के क्रम में सॉर्ट करता है।
     """
     expiries = []
     try:
@@ -23,7 +23,7 @@ def fetch_available_expiries(client_id, access_token, sec_id, seg):
     except Exception:
         pass
     
-    # यदि API से एक्सपायरी नहीं मिली, तो वर्तमान तारीख से आगामी गुरुवार (Thursdays) जनरेट करें
+    # यदि API से एक्सपायरी नहीं मिली, तो आगामी गुरुवार (Thursdays) की लिस्ट जनरेट करें
     if not expiries:
         today = datetime.now()
         days_ahead = (3 - today.weekday() + 7) % 7  # 3 = Thursday
@@ -35,7 +35,7 @@ def fetch_available_expiries(client_id, access_token, sec_id, seg):
             exp_date = next_thursday + timedelta(weeks=i)
             expiries.append(exp_date.strftime("%Y-%m-%d"))
             
-    # तारीखों को हमेशा सही क्रम (Ascending Order) में सॉर्ट करना ताकि सबसे पहली एक्सपायरी नियरेस्ट हो
+    # तारीखों को सही क्रम (Ascending Order) में सॉर्ट करना
     try:
         expiries = sorted(expiries, key=lambda x: datetime.strptime(str(x)[:10], "%Y-%m-%d"))
     except Exception:
@@ -55,7 +55,7 @@ def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symb
     except Exception:
         pass
     
-    # फॉलबैक डायनेमिक सिमुलेशन
+    # फॉलबैक डायनेमिक सिमुलेशन (जब API कनेक्ट न हो)
     spot = 24583.80
     strikes = np.arange(spot - 1000, spot + 1000, 50)
     recs = []
@@ -75,6 +75,7 @@ def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symb
     return pd.DataFrame(recs), spot
 
 def normalize_columns(df):
+    """कอลम नामों को सही फॉर्मेट में मैप करता है"""
     df.columns = [str(c).strip() for c in df.columns]
     for col in ['Strike', 'STRIKE', 'strike_price', 'StrikePrice']:
         if col in df.columns:
@@ -87,7 +88,7 @@ def normalize_columns(df):
     df['STRIKE'] = df['Strike']
 
     if 'Raw_CE_OI' not in df.columns:
-        for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest']:
+        for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest', 'CE_OI']:
             if c in df.columns:
                 df['Raw_CE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(100000)
                 break
@@ -95,7 +96,7 @@ def normalize_columns(df):
             df['Raw_CE_OI'] = 100000
 
     if 'Raw_PE_OI' not in df.columns:
-        for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest']:
+        for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest', 'PE_OI']:
             if c in df.columns:
                 df['Raw_PE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(100000)
                 break
@@ -104,24 +105,33 @@ def normalize_columns(df):
 
     return df
 
-def calculate_max_pain(df, spot=0):
-    if df is None or df.empty:
+def calculate_max_pain(df, spot):
+    if df is None or df.empty or 'Strike' not in df.columns: 
         return int(spot) if spot else 0
         
     strikes = df['Strike'].values
-    ce_oi = df['Raw_CE_OI'].values
-    pe_oi = df['Raw_PE_OI'].values
+    
+    ce_col = 'Raw_CE_OI' if 'Raw_CE_OI' in df.columns else ('CE_OpenInterest' if 'CE_OpenInterest' in df.columns else None)
+    pe_col = 'Raw_PE_OI' if 'Raw_PE_OI' in df.columns else ('PE_OpenInterest' in df.columns else None)
+    
+    if not ce_col or not pe_col:
+        return int(spot)
+        
+    ce_oi = df[ce_col].values
+    pe_oi = df[pe_col].values
     
     min_payout = float('inf')
     max_pain_strike = strikes[0]
     
     for exp_price in strikes:
-        call_pain = np.maximum(0, exp_price - strikes) * ce_oi
-        put_pain = np.maximum(0, strikes - exp_price) * pe_oi
-        total_pain = (call_pain + put_pain).sum()
-        
-        if total_pain < min_payout:
-            min_payout = total_pain
+        payout = 0
+        for i, K in enumerate(strikes):
+            if exp_price > K: 
+                payout += (exp_price - K) * ce_oi[i]
+            if exp_price < K: 
+                payout += (K - exp_price) * pe_oi[i]
+        if payout < min_payout: 
+            min_payout = payout
             max_pain_strike = exp_price
             
     return int(max_pain_strike)
@@ -131,7 +141,21 @@ def calculate_advanced_metrics(df, spot, lot):
         return df
         
     r, T = 0.06, 2 / 365.0
-    res = {k: [] for k in ['CE Delta', 'PE Delta', 'Gamma', 'CE Vega', 'PE Vega', 'CE GEX (Cr)', 'PE GEX (Cr)']}
+    
+    # फिक्स: डुप्लीकेट की 'PE GEX (Cr)' को सुधारकर 'CE GEX (Cr)' और 'PE GEX (Cr)' अलग-अलग किया गया है
+    res = {k: [] for k in [
+        'CE Delta', 'PE Delta', 'Gamma', 'CE Theta', 'PE Theta', 
+        'CE Vega', 'PE Vega', 'CE Vanna', 'PE Vanna', 'CE Charm', 
+        'PE Charm', 'CE GEX (Cr)', 'PE GEX (Cr)', 'CE Turnover (Cr)', 'PE Turnover (Cr)'
+    ]}
+    
+    # डिक्शनरी री-असाइनमेंट से सेफ करने के लिए कीज को स्पष्ट किया गया है
+    keys_list = [
+        'CE Delta', 'PE Delta', 'Gamma', 'CE Theta', 'PE Theta', 
+        'CE Vega', 'PE Vega', 'CE Vanna', 'PE Vanna', 'CE Charm', 
+        'PE Charm', 'CE GEX (Cr)', 'PE GEX (Cr)', 'CE Turnover (Cr)', 'PE Turnover (Cr)'
+    ]
+    res = {k: [] for k in keys_list}
     
     for _, row in df.iterrows():
         K = float(row.get('Strike', spot))
@@ -139,30 +163,57 @@ def calculate_advanced_metrics(df, spot, lot):
         p_iv = max(5.0, float(row.get('PE_IV', 13.5))) / 100.0
         sigma = (c_iv + p_iv) / 2.0
         
-        cd, pd_val, gam, veg = 0.5, -0.5, 0.001, 10.0
+        cd, pd_val, gam, cth, pth, veg, van, chm = 0.5, -0.5, 0.001, -5.0, -5.0, 10.0, 0.01, -0.01
+        
         try:
             if spot > 0 and K > 0 and sigma > 0 and T > 0:
                 d1 = (math.log(spot / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+                d2 = d1 - sigma * math.sqrt(T)
                 cdf_d1, pdf_d1 = norm_cdf(d1), norm_pdf(d1)
+                
                 cd = round(cdf_d1, 2)
                 pd_val = round(cdf_d1 - 1.0, 2)
                 gam = round(pdf_d1 / (spot * sigma * math.sqrt(T)), 5)
+                cth = round((-(spot * pdf_d1 * sigma) / (2 * math.sqrt(T)) - r * K * math.exp(-r * T) * norm_cdf(d2)) / 365.0, 2)
+                pth = round((-(spot * pdf_d1 * sigma) / (2 * math.sqrt(T)) + r * K * math.exp(-r * T) * norm_cdf(-d2)) / 365.0, 2)
                 veg = round((spot * math.sqrt(T) * pdf_d1) / 100.0, 2)
+                van = round(-pdf_d1 * d2 / sigma, 4)
+                chm = round(-pdf_d1 * (2 * r * T - d2 * sigma * math.sqrt(T)) / (2 * T * sigma * math.sqrt(T)) / 365.0, 4)
         except Exception:
             pass
 
         res['CE Delta'].append(cd)
         res['PE Delta'].append(pd_val)
         res['Gamma'].append(gam)
+        res['CE Theta'].append(cth)
+        res['PE Theta'].append(pth)
         res['CE Vega'].append(veg)
         res['PE Vega'].append(veg)
+        res['CE Vanna'].append(van)
+        res['PE Vanna'].append(van)
+        res['CE Charm'].append(chm)
+        res['PE Charm'].append(chm)
         
-        raw_ce_oi = float(row.get('Raw_CE_OI', 0) or 0)
-        raw_pe_oi = float(row.get('Raw_PE_OI', 0) or 0)
+        raw_ce_oi = float(row.get('Raw_CE_OI', row.get('CE_OpenInterest', 0)) or 0)
+        raw_pe_oi = float(row.get('Raw_PE_OI', row.get('PE_OpenInterest', 0)) or 0)
+        ce_vol = float(row.get('CE_Volume', 0) or 0)
+        pe_vol = float(row.get('PE_Volume', 0) or 0)
+        ce_ltp = float(row.get('CE_LTP', 0) or 0)
+        pe_ltp = float(row.get('PE_LTP', 0) or 0)
+        
         res['CE GEX (Cr)'].append(round(raw_ce_oi * lot * (spot**2) * gam / 10**8, 2))
         res['PE GEX (Cr)'].append(round(raw_pe_oi * lot * (spot**2) * gam / 10**8, 2))
+        res['CE Turnover (Cr)'].append(round((ce_vol * ce_ltp * lot) / 10**7, 2))
+        res['PE Turnover (Cr)'].append(round((pe_vol * pe_ltp * lot) / 10**7, 2))
 
     for col_name, val_list in res.items():
-        df[col_name] = val_list
-        
+        if len(val_list) == len(df):
+            df[col_name] = val_list
+            
     return df
+
+def get_buildup(chg_oi, pct_chg):
+    if pct_chg > 0 and chg_oi > 0: return "Short Build"
+    elif pct_chg < 0 and chg_oi < 0: return "Long Unwind"
+    elif pct_chg > 0 and chg_oi < 0: return "Short Cover"
+    return "Long Build"
