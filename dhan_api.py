@@ -39,29 +39,29 @@ def fetch_historical_data(client_id, access_token, security_id, exchange_segment
         logging.error(f"Historical Data Error: {str(e)}")
         return {"error": "Connection Failed", "message": str(e)}
 
-def fetch_expiry_and_lots_live(client_id, access_token, underlying_symbol):
-    """
-    Dhan API या ऑप्शन चैन एंडपॉइंट से सीधे लाइव एक्सपायरी और लॉट साइज फेच करना।
-    (यहाँ कोई भी वैल्यू अपनी तरफ से हार्डकोड नहीं की गई है)
-    """
-    url = f"https://api.dhan.co/v2/optionchain" # या आधिकारिक ऑप्शन चैन एंडपॉइंट
-    headers = {"access-token": access_token, "client-id": client_id, "Content-Type": "application/json"}
-    
-    # यदि आप चाहें तो यहाँ सिक्युरिटी आईडी के हिसाब से लाइव डेटा मांग सकते हैं
+def fetch_live_option_chain(client_id, access_token, underlying_scrip, underlying_seg):
+    """सीधे Dhan API से लाइव ऑप्शन चैन डेटा फेच करना"""
+    url = "https://api.dhan.co/v2/optionchain"
+    headers = {
+        "access-token": access_token, 
+        "client-id": client_id, 
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "underlyingScrip": int(underlying_scrip),
+        "underlyingSeg": underlying_seg
+    }
     try:
-        # अगर API से डायनेमिक लिस्ट फेच करनी है:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
         if response.status_code == 200:
-            data = response.json()
-            # यहाँ से लाइव एक्सपायरी और लॉट साइज पार्स करके रिटर्न करेंगे
-            return data
-        else:
-            return {"expiryList": [], "lotSize": 0, "error": f"API Code {response.status_code}"}
+            return response.json()
+        elif response.status_code == 401:
+            return {"error": "Token Expired"}
+        return {"error": f"API Error {response.status_code}: {response.text}"}
     except Exception as e:
-        return {"expiryList": [], "lotSize": 0, "error": str(e)}
+        return {"error": f"Connection Failed: {str(e)}"}
 
 def fetch_holdings(client_id, access_token):
-    """लाइव होल्डिंग्स फेच करना"""
     url = "https://api.dhan.co/v2/holdings"
     headers = {"access-token": access_token, "client-id": client_id, "Content-Type": "application/json"}
     try:
@@ -75,7 +75,6 @@ def fetch_holdings(client_id, access_token):
         return {"error": str(e)}
 
 def fetch_positions(client_id, access_token):
-    """लाइव पोजीशन फेच करना"""
     url = "https://api.dhan.co/v2/positions"
     headers = {"access-token": access_token, "client-id": client_id, "Content-Type": "application/json"}
     try:
