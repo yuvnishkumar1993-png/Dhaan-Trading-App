@@ -1,12 +1,19 @@
+import os
+import sys
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 
-# utils.py से फंक्शन्स इम्पोर्ट करना
+# --- SAFE PATH RESOLUTION (रूट फोल्डर से utils.py को जोड़ने के लिए) ---
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
+# अब utils.py से सुरक्षित रूप से इम्पोर्ट करें
 from utils import (
-    get_option_chain_data, 
+    fetch_market_option_chain, 
     calculate_max_pain, 
     calculate_advanced_metrics
 )
@@ -18,29 +25,36 @@ st.set_page_config(
     layout="wide"
 )
 
-# Professional Styling Injection
-st.markdown("""
-<style>
-    .main { background-color: #0e1117; color: #f8fafc; }
-    div[data-testid="stHorizontalBlock"] > div { align-items: center; }
-</style>
-""", unsafe_allow_html=True)
-
 st.markdown("## ⚡ Institutional Quant Terminal Pro")
 st.markdown("---")
 
 # --- GLOBAL CONTROLS ---
-col_h1, col_h2, col_h3 = st.columns([2, 2, 2])
+col_h1, col_h2, col_h3, col_h4 = st.columns([2, 2, 2, 2])
 with col_h1:
     selected_symbol = st.selectbox("📌 Asset", ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "RELIANCE"])
 with col_h2:
-    active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: Sensibull-Style Analytics & Graphs"])
+    selected_expiry = st.selectbox("📅 Expiry", [datetime.now().strftime("%Y-%m-%d")])
 with col_h3:
+    active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: Sensibull-Style Analytics & Graphs"])
+with col_h4:
     lot_size = st.number_input("⚙️ Lot Size", min_value=1, value=65)
 
-# --- DATA FETCHING (FROM UTILS) ---
-raw_df = get_option_chain_data()
-live_spot = 24500.0  # मान लेते हैं करेंट स्पॉट प्राइस 24500 है
+# Asset configuration mapping
+master_dict = {
+    "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 65},
+    "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 15},
+    "FINNIFTY": {"sec_id": 27, "seg": "IDX_I", "lot": 25},
+    "SENSEX": {"sec_id": 51, "seg": "BSE_IDX", "lot": 10},
+    "RELIANCE": {"sec_id": 2885, "seg": "NSE_EQ", "lot": 250}
+}
+cfg = master_dict.get(selected_symbol, {"sec_id": 13, "seg": "IDX_I", "lot": 65})
+
+# --- FETCH REAL / DYNAMIC DATA FROM UTILS ---
+raw_df, live_spot = fetch_market_option_chain(
+    client_id="", access_token="", 
+    sec_id=cfg["sec_id"], seg=cfg["seg"], 
+    expiry=selected_expiry, symbol=selected_symbol
+)
 
 if raw_df is not None and not raw_df.empty:
     chain_df = calculate_advanced_metrics(raw_df, live_spot, lot_size)
@@ -51,10 +65,10 @@ else:
 # PAGE 1: CORE OPTION CHAIN TABLE
 # ==========================================
 if "Page 1" in active_page:
-    st.markdown("### 📊 Page 1: Core Option Chain & Price Action Matrix")
+    st.markdown(f"### 📊 Page 1: Core Option Chain (Spot: ₹{live_spot:,.2f})")
     st.markdown("---")
     if not chain_df.empty:
-        display_cols = ['Strike', 'CE_OpenInterest', 'CE_LTP', 'CE_IV', 'CE Delta', 'Gamma', 'PE_IV', 'PE_LTP', 'PE_OpenInterest']
+        display_cols = ['Strike', 'Raw_CE_OI', 'CE_LTP', 'CE_IV', 'CE Delta', 'Gamma', 'PE_IV', 'PE_LTP', 'Raw_PE_OI']
         st.dataframe(chain_df[[c for c in display_cols if c in chain_df.columns]], use_container_width=True, height=600, hide_index=True)
     else:
         st.warning("No data available.")
@@ -63,7 +77,7 @@ if "Page 1" in active_page:
 # PAGE 2: SENSIBULL-STYLE ADVANCED GRAPH DASHBOARD
 # ========================================================
 elif "Page 2" in active_page:
-    st.markdown("### 🎯 Page 2: Sensibull-Style Advanced OI & Analytics Graphs")
+    st.markdown(f"### 🎯 Page 2: Sensibull-Style Analytics (Spot: ₹{live_spot:,.2f})")
     st.markdown("---")
     
     if not chain_df.empty:
@@ -71,7 +85,7 @@ elif "Page 2" in active_page:
         total_put_oi = chain_df['Raw_PE_OI'].sum()
         pcr = round(total_put_oi / total_call_oi, 3) if total_call_oi > 0 else 0
         
-        # Max Pain calculation from utils
+        # Max Pain calculation
         max_pain_strike = calculate_max_pain(chain_df, live_spot)
 
         max_call_row = chain_df.loc[chain_df['Raw_CE_OI'].idxmax()]
@@ -89,18 +103,23 @@ elif "Page 2" in active_page:
         
         st.markdown("---")
 
+        # Filter nearby strikes for crisp plotting (±12 strikes around live spot)
+        chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
+        center_idx = chain_df['Dist'].idxmin()
+        plot_df = chain_df.iloc[max(0, center_idx-12):min(len(chain_df), center_idx+13)].copy()
+
         # --- GRAPH 1: Open Interest Distribution Chart ---
         st.markdown("#### 📊 1. Strike-wise Open Interest (OI) Distribution Chart")
         fig_oi = go.Figure()
         fig_oi.add_trace(go.Bar(
-            x=chain_df['Strike'], y=chain_df['Raw_CE_OI'] / 100000,
+            x=plot_df['Strike'], y=plot_df['Raw_CE_OI'] / 100000,
             name='Call OI (Resistance)', marker_color='#ef4444'
         ))
         fig_oi.add_trace(go.Bar(
-            x=chain_df['Strike'], y=chain_df['Raw_PE_OI'] / 100000,
+            x=plot_df['Strike'], y=plot_df['Raw_PE_OI'] / 100000,
             name='Put OI (Support)', marker_color='#22c55e'
         ))
-        fig_oi.add_vline(x=live_spot, line_dash="dash", line_color="#fbbf24", annotation_text=f"Spot: {live_spot}")
+        fig_oi.add_vline(x=live_spot, line_dash="dash", line_color="#fbbf24", annotation_text=f"Spot: {live_spot:.1f}")
         fig_oi.update_layout(
             barmode='group', template='plotly_dark',
             xaxis_title="Strike Price", yaxis_title="Open Interest (in Lakhs)",
@@ -114,11 +133,11 @@ elif "Page 2" in active_page:
         st.markdown("#### 📉 2. Implied Volatility (IV) Smile & Skew Curve")
         fig_iv = go.Figure()
         fig_iv.add_trace(go.Scatter(
-            x=chain_df['Strike'], y=chain_df['CE_IV'],
+            x=plot_df['Strike'], y=plot_df['CE_IV'],
             mode='lines+markers', name='Call IV', line=dict(color='#ef4444', width=2)
         ))
         fig_iv.add_trace(go.Scatter(
-            x=chain_df['Strike'], y=chain_df['PE_IV'],
+            x=plot_df['Strike'], y=plot_df['PE_IV'],
             mode='lines+markers', name='Put IV', line=dict(color='#22c55e', width=2)
         ))
         fig_iv.add_vline(x=live_spot, line_dash="dash", line_color="#fbbf24")
