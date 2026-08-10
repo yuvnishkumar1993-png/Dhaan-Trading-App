@@ -77,7 +77,7 @@ def get_master_df():
 
 master_df = get_master_df()
 
-# Load Exact Lot Size from reference CSV file
+# Load Exact Lot Size from uploaded CSV reference file (`Dhan - Nse Fno Lot Size (1).csv`)
 @st.cache_data(ttl=3600)
 def get_lot_size_df():
     try:
@@ -121,26 +121,36 @@ with col_c2:
     selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="term_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
-# --- 2. EXACT LOT SIZE AUTO-DETECTION FROM UPLOADED CSV & FALLBACK ---
+# --- 2. EXACT 2026 LOT SIZE AUTO-DETECTION (सटीक लॉट साइज मैपिंग) ---
 def fetch_exact_lot(symbol):
     sym_upper = symbol.upper()
-    if not lot_df.empty and 'Symbol' in lot_df.columns and 'Lot Size (Aug 2026)' in lot_df.columns:
+    
+    # 1. पहले CSV फाइल से मैच करना
+    if not lot_df.empty and 'Symbol' in lot_df.columns:
         match = lot_df[lot_df['Symbol'].str.upper() == sym_upper]
         if not match.empty:
-            return int(match.iloc[0]['Lot Size (Aug 2026)'])
-    
-    # Fallback map for indices like SENSEX or others
-    fallback_lot_map = {
+            for col in ['Lot Size (Aug 2026)', 'Lot Size', 'LOT SIZE']:
+                if col in lot_df.columns:
+                    val = match.iloc[0][col]
+                    if pd.notnull(val) and int(val) > 0:
+                        return int(val)
+                        
+    # 2. आधिकारिक 2026 अपडेटेड फॉलबैक मैप (Sensex = 20, Nifty = 65, BankNifty = 30)
+    exact_lot_map = {
         "NIFTY": 65,
         "BANKNIFTY": 30,
         "FINNIFTY": 60,
-        "SENSEX": 10,
+        "SENSEX": 20,
         "MIDCPNIFTY": 120,
         "RELIANCE": 500,
         "TCS": 175,
-        "SBIN": 750
+        "SBIN": 750,
+        "HDFCBANK": 550,
+        "ICICIBANK": 700,
+        "INFY": 400,
+        "TATAMOTORS": 1400
     }
-    return fallback_lot_map.get(sym_upper, 25)
+    return exact_lot_map.get(sym_upper, 25)
 
 auto_lot_size = fetch_exact_lot(selected_symbol)
 
@@ -174,7 +184,7 @@ with col_c5:
 
 
 # --- 3. AUTOMATIC 5-MINUTE REFRESH ENGINE (`st.fragment`) ---
-@st.fragment(run_every=300) # Auto-refreshes every 5 minutes in background
+@st.fragment(run_every=300)
 def render_institutional_terminal():
     try:
         chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
@@ -306,7 +316,7 @@ def render_institutional_terminal():
     pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
     total_net_gex = round(disp_df['CE GEX (Cr)'].sum() + disp_df['PE GEX (Cr)'].sum(), 2)
 
-    # Dashboard Metrics Bar (Displaying exact auto-detected lot size from uploaded reference table)
+    # Dashboard Metrics Bar
     st.markdown("---")
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1: st.metric("📌 Asset", selected_symbol)
