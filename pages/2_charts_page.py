@@ -68,10 +68,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("## ⚡ Institutional Quant Terminal — Ultimate Graphical & Quantitative Suite")
+st.markdown("## ⚡ Institutional Quant Terminal — Sensibull-Grade Advanced Graphical Suite")
 st.markdown("---")
 
-# Session State
+# Session State Checks
 if "client_id" not in st.session_state: st.session_state.client_id = ""
 if "access_token" not in st.session_state: st.session_state.access_token = ""
 if "intraday_history" not in st.session_state: st.session_state.intraday_history = []
@@ -85,7 +85,6 @@ def get_master_df():
 
 master_df = get_master_df()
 
-# Load Exact Lot Size Mapping
 @st.cache_data(ttl=3600)
 def load_lot_size_mapping():
     try:
@@ -103,14 +102,33 @@ def load_lot_size_mapping():
 
 lot_mapping = load_lot_size_mapping()
 
-col_c1, col_c2, col_c3, col_c4 = st.columns([2, 2, 2.5, 2])
+# Controls Panel
+col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns([1.5, 1.8, 1.8, 2, 1.5])
 
 with col_c1:
+    asset_type = st.selectbox("📊 Segment", ["Indices", "F&O Stocks"], key="term_seg_sel")
+
+with col_c2:
     default_indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"]
-    sym_col = next((c for c in ['SEM_TRADING_SYMBOL', 'TRADING_SYMBOL', 'SYMBOL'] if not master_df.empty and c in master_df.columns), None)
-    available_symbols = master_df[sym_col].dropna().unique().tolist() if sym_col else default_indices
+    default_stocks = ["RELIANCE", "TCS", "SBIN", "INFY", "HDFCBANK", "ICICIBANK", "TATAMOTORS"]
+    seg_col = next((c for c in ['SEM_EXCH_SEGMENT', 'EXCH_SEGMENT', 'SEGMENT'] if c in master_df.columns), None)
+    sym_col = next((c for c in ['SEM_TRADING_SYMBOL', 'TRADING_SYMBOL', 'SYMBOL'] if c in master_df.columns), None)
+    
+    available_symbols = []
+    if not master_df.empty and seg_col and sym_col:
+        try:
+            if asset_type == "Indices":
+                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['IDX_I', 'BSE_IDX', 'BSE_FO', 'NSE_FO'])]
+            else:
+                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['NSE_FO', 'BSE_FO', 'NSE_EQ'])]
+            available_symbols = sub_df[sym_col].dropna().unique().tolist()
+        except:
+            available_symbols = []
+    if not available_symbols:
+        available_symbols = default_indices if asset_type == "Indices" else default_stocks
+
     current_idx = available_symbols.index(st.session_state.get("global_symbol", available_symbols[0])) if st.session_state.get("global_symbol", "") in available_symbols else 0
-    selected_symbol = st.selectbox("📌 Asset Selector", available_symbols, index=current_idx, key="quant_sym_sel")
+    selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="term_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
 def fetch_exact_lot(symbol):
@@ -122,7 +140,6 @@ def fetch_exact_lot(symbol):
 auto_lot_size = fetch_exact_lot(selected_symbol)
 
 sec_id, seg = 13, "IDX_I"
-seg_col = next((c for c in ['SEM_EXCH_SEGMENT', 'EXCH_SEGMENT', 'SEGMENT'] if not master_df.empty and c in master_df.columns), None)
 if not master_df.empty and sym_col:
     match_row = master_df[master_df[sym_col] == selected_symbol.upper()]
     if not match_row.empty:
@@ -136,16 +153,16 @@ try:
 except Exception:
     expiries = [datetime.now().strftime("%Y-%m-%d")]
 
-with col_c2:
-    selected_expiry = st.selectbox("📅 Expiry", expiries, index=0, key=f"quant_exp_{selected_symbol}")
-
 with col_c3:
-    strike_range_mode = st.selectbox("🎯 Strike Range", ["±5 Strikes", "±10 Strikes", "±20 Strikes", "Full Chain (All)"], index=1, key=f"quant_range_{selected_symbol}")
+    selected_expiry = st.selectbox("📅 Expiry", expiries, index=0, key=f"term_exp_{selected_symbol}")
 
 with col_c4:
-    show_greeks = st.checkbox("Show Quant Metrics", value=True)
+    strike_range_mode = st.selectbox("🎯 Range", ["±5 Strikes", "±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"], index=1, key=f"term_range_{selected_symbol}")
 
-# --- FETCH REAL LIVE OPTION CHAIN DATA ---
+with col_c5:
+    show_greeks = st.checkbox("Show Greeks", value=True, key="term_greeks")
+
+# --- DATA FETCHING & PROCESSING ---
 try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
         client_id, access_token, sec_id, seg, selected_expiry, selected_symbol
@@ -156,8 +173,8 @@ except Exception:
 if chain_df is None or chain_df.empty or live_spot <= 0:
     sym_upper = selected_symbol.upper()
     if "BANKNIFTY" in sym_upper: live_spot, base_st = 51500.00, 51500
-    elif "SENSEX" in sym_upper: live_spot, base_st = 73500.00, 73500
-    else: live_spot, base_st = 24583.80, 24600
+    elif "SENSEX" in sym_upper: live_spot, base_st = 73525.00, 73500
+    else: live_spot, base_st = 24580.00, 24600
     
     strikes = np.arange(base_st - 1000, base_st + 1050, 50)
     recs = []
@@ -169,11 +186,12 @@ if chain_df is None or chain_df.empty or live_spot <= 0:
             "CE_Volume": 1000000, "PE_Volume": 1200000,
             "CE_IV": 13.0, "PE_IV": 13.5,
             "CE_Chg_OI": int(np.random.randint(-20000, 40000)),
-            "PE_Chg_OI": int(np.random.randint(-20000, 40000))
+            "PE_Chg_OI": int(np.random.randint(-20000, 40000)),
+            "CE_LTP": max(1.0, live_spot - st_val + 20),
+            "PE_LTP": max(1.0, st_val - live_spot + 20)
         })
     chain_df = pd.DataFrame(recs)
 
-# --- NORMALIZE & SORT STRIKES ASCENDING ---
 strike_col = next((c for c in chain_df.columns if 'STRIKE' in str(c).upper()), chain_df.columns[0])
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
@@ -195,10 +213,10 @@ if 'CE_Volume' not in chain_df.columns: chain_df['CE_Volume'] = 100000
 if 'PE_Volume' not in chain_df.columns: chain_df['PE_Volume'] = 100000
 if 'CE_IV' not in chain_df.columns: chain_df['CE_IV'] = 13.0
 if 'PE_IV' not in chain_df.columns: chain_df['PE_IV'] = 13.5
-if 'CE_Chg_OI' not in chain_df.columns: chain_df['CE_Chg_OI'] = 0
-if 'PE_Chg_OI' not in chain_df.columns: chain_df['PE_Chg_OI'] = 0
+if 'CE_LTP' not in chain_df.columns: chain_df['CE_LTP'] = 10.0
+if 'PE_LTP' not in chain_df.columns: chain_df['PE_LTP'] = 10.0
 
-# Strict Ascending Sort
+# Sort Ascending
 chain_df = chain_df.sort_values('Strike', ascending=True).reset_index(drop=True)
 
 def norm_cdf(x): return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
@@ -235,18 +253,20 @@ def calculate_advanced_metrics(df, spot, lot):
 
 chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
-# Strike Range Filtering
 chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
 if "±5" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-5):min(len(chain_df), idx+6)].copy()
 elif "±10" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-10):min(len(chain_df), idx+11)].copy()
 elif "±20" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-20):min(len(chain_df), idx+21)].copy()
+elif "±30" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-30):min(len(chain_df), idx+31)].copy()
 else: disp_df = chain_df.copy()
 
 disp_df = disp_df.sort_values('Strike', ascending=True).reset_index(drop=True)
 
+atm_row = disp_df.loc[disp_df['Dist'].idxmin()] if not disp_df.empty else chain_df.loc[chain_df['Dist'].idxmin()]
+atm_iv = round((atm_row.get('CE_IV', 13.0) + atm_row.get('PE_IV', 13.5)) / 2.0, 2)
 f_ce_oi, f_pe_oi = disp_df['Raw_CE_OI'].sum(), disp_df['Raw_PE_OI'].sum()
 oi_pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
-f_ce_vol, f_pe_vol = disp_df['CE_Volume'].sum(), disp_df['PE_Volume'].sum()
+f_ce_vol, f_pe_vol = disp_df.get('CE_Volume', 100000).sum(), disp_df.get('PE_Volume', 100000).sum()
 vol_pcr_val = round(f_pe_vol / f_ce_vol, 2) if f_ce_vol > 0 else 0.90
 
 def calculate_max_pain(df, spot):
@@ -259,20 +279,21 @@ def calculate_max_pain(df, spot):
 
 max_pain_val = calculate_max_pain(chain_df, live_spot)
 
-# Real Intraday Snapshot Logger
+# Intraday History Logger
 current_time_str = datetime.now().strftime("%H:%M")
 if not st.session_state.intraday_history or st.session_state.intraday_history[-1]['time'] != current_time_str:
     st.session_state.intraday_history.append({"time": current_time_str, "spot": live_spot, "oi_pcr": oi_pcr_val, "vol_pcr": vol_pcr_val})
     if len(st.session_state.intraday_history) > 50: st.session_state.intraday_history.pop(0)
 
-# Top Metrics Bar
+# Metrics Bar
 st.markdown("---")
-m1, m2, m3, m4, m5 = st.columns(5)
-with m1: st.metric("Live Spot", f"₹{live_spot:,.1f}")
-with m2: st.metric("Max Pain", max_pain_val)
-with m3: st.metric("OI PCR", oi_pcr_val)
-with m4: st.metric("Lot Size", auto_lot_size)
-with m5: st.metric("Total Vol PCR", vol_pcr_val)
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+with m1: st.metric("📌 Asset", selected_symbol)
+with m2: st.metric("⚡ Live Spot", f"₹{live_spot:,.2f}")
+with m3: st.metric("⚙️ Lot Size", auto_lot_size)
+with m4: st.metric("📊 ATM IV", f"{atm_iv}%")
+with m5: st.metric("⚖️ OI PCR", oi_pcr_val, delta="Bullish" if oi_pcr_val > 1.0 else "Bearish")
+with m6: st.metric("🎯 Max Pain", max_pain_val)
 st.markdown("---")
 
 sensibull_layout = dict(
@@ -287,7 +308,7 @@ sensibull_layout = dict(
     xaxis=dict(type='category', tickangle=-30)
 )
 
-st.markdown(f"### 🖥️ ADVANCED QUANT ANALYTICS SUITE (ALL 10 MODULES) — {selected_symbol}")
+st.markdown(f"### 📊 Sensibull-Grade Advanced Graphical Suite ({selected_symbol})")
 st.markdown("---")
 
 n_strikes = len(disp_df)
@@ -295,8 +316,8 @@ strike_str_list = [str(int(s)) for s in disp_df['Strike']]
 closest_spot = str(int(min(disp_df['Strike'], key=lambda x: abs(x - live_spot))))
 closest_pain = str(int(min(disp_df['Strike'], key=lambda x: abs(x - max_pain_val))))
 
-# --- MOD A: OI Profile with Sigma Bands & Max Pain ---
-st.markdown("##### [MOD A] Open Interest Profile, Sigma Bands & Max Pain Magnet")
+# --- MOD A: OI Profile with Spot & Max Pain ---
+st.markdown("##### [MOD A] Open Interest Profile, Support & Resistance")
 fig_a = go.Figure()
 fig_a.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_CE_OI'], name='CE OI (Res)', marker_color='#ef4444'))
 fig_a.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_PE_OI'], name='PE OI (Sup)', marker_color='#22c55e'))
@@ -308,7 +329,7 @@ fig_a.update_layout(**sensibull_layout, barmode="group")
 st.plotly_chart(fig_a, use_container_width=True)
 max_ce = disp_df.loc[disp_df['Raw_CE_OI'].idxmax()]['Strike'] if not disp_df.empty else 0
 max_pe = disp_df.loc[disp_df['Raw_PE_OI'].idxmax()]['Strike'] if not disp_df.empty else 0
-st.info(f"💡 **Signal:** Resistance: **{max_ce}** | Support: **{max_pe}** | Target Magnet: **{max_pain_val}**")
+st.info(f"💡 **Signal:** Resistance: **{max_ce}** | Support: **{max_pe}** | Max Pain Target: **{max_pain_val}**")
 st.markdown("---")
 
 # --- MOD B: Gamma GEX ---
@@ -318,7 +339,7 @@ fig_b.add_trace(go.Bar(x=strike_str_list, y=disp_df['CE GEX (Cr)'], name='CE GEX
 fig_b.add_trace(go.Bar(x=strike_str_list, y=disp_df['PE GEX (Cr)'], name='PE GEX', marker_color='#c084fc'))
 fig_b.update_layout(**sensibull_layout, barmode="group")
 st.plotly_chart(fig_b, use_container_width=True)
-st.info("💡 **Signal:** Positive GEX peaks act as institutional pin zones restricting momentum.")
+st.info("💡 **Signal:** High GEX peaks restrict sharp directional breakouts.")
 st.markdown("---")
 
 # --- MOD C: IV Smile ---
@@ -330,7 +351,7 @@ fig_c.add_trace(go.Scatter(x=strike_str_list, y=ce_iv, mode='lines+markers', nam
 fig_c.add_trace(go.Scatter(x=strike_str_list, y=pe_iv, mode='lines+markers', name='PE IV', line=dict(color='#22c55e', width=2)))
 fig_c.update_layout(**sensibull_layout)
 st.plotly_chart(fig_c, use_container_width=True)
-st.info("💡 **Signal:** Steep Put IV skew indicates heavy institutional buying of downside protection.")
+st.info("💡 **Signal:** Steep Put IV skew reflects heavy downside protection buying.")
 st.markdown("---")
 
 # --- MOD D: Volume ---
@@ -342,11 +363,11 @@ fig_d.add_trace(go.Bar(x=strike_str_list, y=ce_vol, name='CE Vol', marker_color=
 fig_d.add_trace(go.Bar(x=strike_str_list, y=pe_vol, name='PE Vol', marker_color='#fbbf24'))
 fig_d.update_layout(**sensibull_layout, barmode="stack")
 st.plotly_chart(fig_d, use_container_width=True)
-st.info("💡 **Signal:** High volume concentrations represent immediate intraday battle zones.")
+st.info("💡 **Signal:** High volume concentrations represent key intraday battle zones.")
 st.markdown("---")
 
 # --- MOD E: OI Change ---
-st.markdown("##### [MOD E] Strike-Wise Change in Open Interest (OI Build-up)")
+st.markdown("##### [MOD E] Strike-Wise Change in Open Interest")
 ce_chg = disp_df.get('CE_Chg_OI', [0]*n_strikes)
 pe_chg = disp_df.get('PE_Chg_OI', [0]*n_strikes)
 fig_e = go.Figure()
@@ -354,7 +375,7 @@ fig_e.add_trace(go.Bar(x=strike_str_list, y=ce_chg, name='CE OI Chg', marker_col
 fig_e.add_trace(go.Bar(x=strike_str_list, y=pe_chg, name='PE OI Chg', marker_color='#22c55e'))
 fig_e.update_layout(**sensibull_layout, barmode="group")
 st.plotly_chart(fig_e, use_container_width=True)
-st.info("💡 **Signal:** Positive OI changes point towards fresh writing (Resistance/Support strengthening).")
+st.info("💡 **Signal:** Fresh positioning spikes show smart money involvement.")
 st.markdown("---")
 
 # --- MOD F: Theta Decay ---
@@ -364,17 +385,17 @@ fig_f = go.Figure()
 fig_f.add_trace(go.Scatter(x=strike_str_list, y=theta, mode='lines+markers', name='Theta', line=dict(color='#facc15', width=2)))
 fig_f.update_layout(**sensibull_layout)
 st.plotly_chart(fig_f, use_container_width=True)
-st.info("💡 **Signal:** Maximum negative time decay is concentrated at ATM strikes, favoring option sellers.")
+st.info("💡 **Signal:** Peak negative theta decay occurs right at ATM strikes.")
 st.markdown("---")
 
-# --- MOD G: Max Pain Curve ---
-st.markdown(f"##### [MOD G] Max Pain Strike Payout Curve (Current Target: {max_pain_val})")
+# --- MOD G: Max Pain ---
+st.markdown(f"##### [MOD G] Max Pain Strike Curve ({max_pain_val})")
 pain_vals = np.sort(disp_df['Raw_CE_OI'].values)[::-1]
 fig_g = go.Figure()
-fig_g.add_trace(go.Scatter(x=strike_str_list, y=pain_vals, mode='lines+markers', name='Pain Payout', line=dict(color='#f43f5e', width=2), fill='tozeroy'))
+fig_g.add_trace(go.Scatter(x=strike_str_list, y=pain_vals, mode='lines+markers', name='Pain Curve', line=dict(color='#f43f5e', width=2), fill='tozeroy'))
 fig_g.update_layout(**sensibull_layout)
 st.plotly_chart(fig_g, use_container_width=True)
-st.info(f"💡 **Signal:** Market makers attempt to anchor spot close to **{max_pain_val}** by expiry settlement.")
+st.info(f"💡 **Signal:** Expiry settlement tends to get pulled toward **{max_pain_val}**.")
 st.markdown("---")
 
 # --- MOD H: Intraday PCR & Spot History Trend ---
@@ -382,19 +403,4 @@ st.markdown("##### [MOD H] Real Intraday PCR & Spot History Trend")
 hist_df = pd.DataFrame(st.session_state.intraday_history)
 if not hist_df.empty:
     fig_h = make_subplots(specs=[[{"secondary_y": True}]])
-    fig_h.add_trace(go.Scatter(x=hist_df['time'], y=hist_df['oi_pcr'], name='OI PCR', line=dict(color='#38bdf8', width=2)), secondary_y=False)
-    fig_h.add_trace(go.Scatter(x=hist_df['time'], y=hist_df['vol_pcr'], name='Vol PCR', line=dict(color='#fbbf24', width=2, dash='dot')), secondary_y=False)
-    fig_h.add_trace(go.Scatter(x=hist_df['time'], y=hist_df['spot'], name='Spot Price', line=dict(color='#4ade80', width=2)), secondary_y=True)
-    pcr_layout = sensibull_layout.copy()
-    pcr_layout['xaxis'] = dict(type='category', tickangle=0)
-    fig_h.update_layout(**pcr_layout)
-    fig_h.update_yaxes(title_text="<b>PCR Value</b>", secondary_y=False)
-    fig_h.update_yaxes(title_text="<b>Spot Price</b>", secondary_y=True)
-    st.plotly_chart(fig_h, use_container_width=True)
-    st.info(f"💡 **Signal:** Tracking session progression across {len(hist_df)} recorded snapshot(s).")
-else:
-    st.info("⏳ Gathering intraday history snapshots...")
-st.markdown("---")
-
-# --- MOD I: Delta Flow ---
-st.markdown("##### [MOD I] Cumulative Delta Flow Matrix"
+    fig_h.add_trace(go.Sca
