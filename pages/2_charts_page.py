@@ -6,13 +6,14 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 
-# --- SAFE PATH RESOLUTION (रूट फोल्डर से utils.py को जोड़ने के लिए) ---
+# --- SAFE PATH RESOLUTION ---
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
-# अब utils.py से सुरक्षित रूप से इम्पोर्ट करें
+# utils.py से फंक्शन्स इम्पोर्ट करना
 from utils import (
+    fetch_available_expiries,
     fetch_market_option_chain, 
     calculate_max_pain, 
     calculate_advanced_metrics
@@ -28,17 +29,6 @@ st.set_page_config(
 st.markdown("## ⚡ Institutional Quant Terminal Pro")
 st.markdown("---")
 
-# --- GLOBAL CONTROLS ---
-col_h1, col_h2, col_h3, col_h4 = st.columns([2, 2, 2, 2])
-with col_h1:
-    selected_symbol = st.selectbox("📌 Asset", ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "RELIANCE"])
-with col_h2:
-    selected_expiry = st.selectbox("📅 Expiry", [datetime.now().strftime("%Y-%m-%d")])
-with col_h3:
-    active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: Sensibull-Style Analytics & Graphs"])
-with col_h4:
-    lot_size = st.number_input("⚙️ Lot Size", min_value=1, value=65)
-
 # Asset configuration mapping
 master_dict = {
     "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 65},
@@ -47,7 +37,23 @@ master_dict = {
     "SENSEX": {"sec_id": 51, "seg": "BSE_IDX", "lot": 10},
     "RELIANCE": {"sec_id": 2885, "seg": "NSE_EQ", "lot": 250}
 }
+
+# --- GLOBAL CONTROLS ---
+col_h1, col_h2, col_h3, col_h4 = st.columns([2, 2, 2, 2])
+with col_h1:
+    selected_symbol = st.selectbox("📌 Asset", list(master_dict.keys()))
+
 cfg = master_dict.get(selected_symbol, {"sec_id": 13, "seg": "IDX_I", "lot": 65})
+
+# ऑटोमैटिक एक्सपायरी फेच करना
+expiries = fetch_available_expiries(client_id="", access_token="", sec_id=cfg["sec_id"], seg=cfg["seg"])
+
+with col_h2:
+    selected_expiry = st.selectbox("📅 Expiry", expiries)
+with col_h3:
+    active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: Sensibull-Style Analytics & Graphs"])
+with col_h4:
+    lot_size = st.number_input("⚙️ Lot Size", min_value=1, value=int(cfg["lot"]))
 
 # --- FETCH REAL / DYNAMIC DATA FROM UTILS ---
 raw_df, live_spot = fetch_market_option_chain(
@@ -85,7 +91,6 @@ elif "Page 2" in active_page:
         total_put_oi = chain_df['Raw_PE_OI'].sum()
         pcr = round(total_put_oi / total_call_oi, 3) if total_call_oi > 0 else 0
         
-        # Max Pain calculation
         max_pain_strike = calculate_max_pain(chain_df, live_spot)
 
         max_call_row = chain_df.loc[chain_df['Raw_CE_OI'].idxmax()]
