@@ -85,32 +85,26 @@ if chain_df is None or chain_df.empty or live_spot <= 0:
     st.stop()
 
 # --- BULLETPROOF COLUMN MAPPING & STRIKE SORTING ---
-strike_col = next((c for c in chain_df.columns if 'STRIKE' in str(c).upper()), chain_df.columns[0])
+strike_col = next((c for c in chain_df.columns if 'STRIKE' in str(c).upper() or 'STRIKE' == str(c).upper()), chain_df.columns[0])
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
 
-# Smart column mapping for OI, Volume and IV
-for col in chain_df.columns:
-    uc = str(col).upper()
-    if ('CE' in uc or 'CALL' in uc) and ('OI' in uc) and 'CHG' not in uc:
-        chain_df['Raw_CE_OI'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(0)
-    elif ('PE' in uc or 'PUT' in uc) and ('OI' in uc) and 'CHG' not in uc:
-        chain_df['Raw_PE_OI'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(0)
-    elif ('CE' in uc or 'CALL' in uc) and 'VOL' in uc:
-        chain_df['CE_Volume'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(0)
-    elif ('PE' in uc or 'PUT' in uc) and 'VOL' in uc:
-        chain_df['PE_Volume'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(0)
-    elif ('CE' in uc or 'CALL' in uc) and 'IV' in uc:
-        chain_df['CE_IV'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(13.0)
-    elif ('PE' in uc or 'PUT' in uc) and 'IV' in uc:
-        chain_df['PE_IV'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(13.5)
+# Explicit and robust column detection for Call/Put OI and Volume
+ce_oi_col = next((c for c in chain_df.columns if ('CE' in str(c).upper() or 'CALL' in str(c).upper()) and 'OI' in str(c).upper() and 'CHG' not in str(c).upper()), None)
+pe_oi_col = next((c for c in chain_df.columns if ('PE' in str(c).upper() or 'PUT' in str(c).upper()) and 'OI' in str(c).upper() and 'CHG' not in str(c).upper()), None)
 
-if 'Raw_CE_OI' not in chain_df.columns: chain_df['Raw_CE_OI'] = 0
-if 'Raw_PE_OI' not in chain_df.columns: chain_df['Raw_PE_OI'] = 0
-if 'CE_Volume' not in chain_df.columns: chain_df['CE_Volume'] = 100000
-if 'PE_Volume' not in chain_df.columns: chain_df['PE_Volume'] = 100000
-if 'CE_IV' not in chain_df.columns: chain_df['CE_IV'] = 13.0
-if 'PE_IV' not in chain_df.columns: chain_df['PE_IV'] = 13.5
+ce_vol_col = next((c for c in chain_df.columns if ('CE' in str(c).upper() or 'CALL' in str(c).upper()) and 'VOL' in str(c).upper()), None)
+pe_vol_col = next((c for c in chain_df.columns if ('PE' in str(c).upper() or 'PUT' in str(c).upper()) and 'VOL' in str(c).upper()), None)
+
+ce_iv_col = next((c for c in chain_df.columns if ('CE' in str(c).upper() or 'CALL' in str(c).upper()) and 'IV' in str(c).upper()), None)
+pe_iv_col = next((c for c in chain_df.columns if ('PE' in str(c).upper() or 'PUT' in str(c).upper()) and 'IV' in str(c).upper()), None)
+
+chain_df['Raw_CE_OI'] = pd.to_numeric(chain_df[ce_oi_col], errors='coerce').fillna(0) if ce_oi_col else 0
+chain_df['Raw_PE_OI'] = pd.to_numeric(chain_df[pe_oi_col], errors='coerce').fillna(0) if pe_oi_col else 0
+chain_df['CE_Volume'] = pd.to_numeric(chain_df[ce_vol_col], errors='coerce').fillna(100000) if ce_vol_col else 100000
+chain_df['PE_Volume'] = pd.to_numeric(chain_df[pe_vol_col], errors='coerce').fillna(100000) if pe_vol_col else 100000
+chain_df['CE_IV'] = pd.to_numeric(chain_df[ce_iv_col], errors='coerce').fillna(13.0) if ce_iv_col else 13.0
+chain_df['PE_IV'] = pd.to_numeric(chain_df[pe_iv_col], errors='coerce').fillna(13.5) if pe_iv_col else 13.5
 
 # ALWAYS SORT ASCENDING BY STRIKE
 chain_df = chain_df.sort_values('Strike', ascending=True).reset_index(drop=True)
@@ -169,7 +163,7 @@ fig = go.Figure()
 fig.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_CE_OI'], name='CE OI (Resistance)', marker_color='#ef4444'))
 fig.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_PE_OI'], name='PE OI (Support)', marker_color='#22c55e'))
 
-# Safely add vertical indicator lines using shapes and annotations instead of add_vline
+# Safely add vertical indicator lines using shapes and annotations
 fig.add_shape(type="line", x0=closest_spot_strike, x1=closest_spot_strike, y0=0, y1=1, yref="paper", line=dict(color="#38bdf8", dash="dash", width=2))
 fig.add_annotation(x=closest_spot_strike, y=1, yref="paper", text=f"Spot: {live_spot:.1f}", showarrow=False, yanchor="bottom", font=dict(color="#38bdf8", size=10))
 
