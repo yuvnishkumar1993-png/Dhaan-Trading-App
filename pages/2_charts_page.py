@@ -137,7 +137,7 @@ max_pain_val = calculate_max_pain(chain_df, live_spot)
 # Expected Move / Sigma Calculation based on ATM IV
 atm_row = chain_df.loc[chain_df['Dist'].idxmin()]
 atm_iv = (atm_row.get('CE_IV', 13.0) + atm_row.get('PE_IV', 13.5)) / 2.0 / 100.0
-days_to_exp = 3.0 / 365.0 # Estimated short-term tenor or 1-day standard deviation
+days_to_exp = 3.0 / 365.0
 sigma_1 = live_spot * atm_iv * math.sqrt(days_to_exp)
 sigma_2 = sigma_1 * 2.0
 
@@ -161,14 +161,18 @@ with m5: st.metric("Total Put Vol", f"{total_put_vol:,}")
 
 st.markdown("---")
 
+# Find exact matching category string for Vlines safely
+closest_spot_strike = str(int(min(disp_df['Strike'], key=lambda x: abs(x - live_spot))))
+closest_pain_strike = str(int(min(disp_df['Strike'], key=lambda x: abs(x - max_pain_val))))
+
 # --- PLOTLY CHART FOR MOD A WITH ANNOTATIONS ---
 fig = go.Figure()
 fig.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_CE_OI'], name='CE OI (Resistance)', marker_color='#ef4444'))
 fig.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_PE_OI'], name='PE OI (Support)', marker_color='#22c55e'))
 
-# Annotations for Live Spot, Max Pain, and Sigma Levels
-fig.add_vline(x=str(round(live_spot, -2)), line_dash="dash", line_color="#38bdf8", annotation_text=f"Spot: {live_spot:.1f}", annotation_position="top left")
-fig.add_vline(x=str(round(max_pain_val, -2)), line_dash="dot", line_color="#f43f5e", annotation_text=f"Max Pain: {max_pain_val}", annotation_position="top right")
+# Safely add vertical lines using exact matching categories
+fig.add_vline(x=closest_spot_strike, line_dash="dash", line_color="#38bdf8", annotation_text=f"Spot: {live_spot:.1f}", annotation_position="top left")
+fig.add_vline(x=closest_pain_strike, line_dash="dot", line_color="#f43f5e", annotation_text=f"Max Pain: {max_pain_val}", annotation_position="top right")
 
 fig.update_layout(
     template="plotly_dark",
