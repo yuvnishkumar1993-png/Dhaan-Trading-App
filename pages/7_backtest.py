@@ -425,3 +425,72 @@ matrix_df = matrix_df.loc[:, ~matrix_df.columns.duplicated()]
 st.markdown(f"### 📊 Institutional Backtest & Historical Analytics ({strike_range_mode})")
 st.markdown("---")
 st.dataframe(matrix_df, use_container_width=True, height=650, hide_index=True)
+import streamlit as st
+import pandas as pd
+import numpy as np
+import math
+import time
+from datetime import datetime
+
+# Page Config
+st.set_page_config(page_title="Quant Terminal", layout="wide")
+
+# 1. Master Data Loader
+@st.cache_data(ttl=3600)
+def get_master_df():
+    try:
+        url = "https://images.dhan.co/api-data/api-scrip-master.csv"
+        df = pd.read_csv(url, low_memory=False)
+        df.columns = [str(col).strip().upper() for col in df.columns]
+        return df
+    except: return pd.DataFrame()
+
+master_df = get_master_df()
+
+st.title("⚡ Institutional Quant Terminal")
+
+# 2. Controls
+col1, col2 = st.columns(2)
+with col1:
+    asset_type = st.radio("Type", ["Indices", "Stocks"], horizontal=True)
+with col2:
+    if not master_df.empty:
+        sym_col = 'SEM_TRADING_SYMBOL'
+        if asset_type == "Indices":
+            options = master_df[master_df['SEM_EXCH_SEGMENT'].isin(['IDX_I', 'BSE_IDX'])][sym_col].unique()
+        else:
+            options = master_df[master_df['SEM_EXCH_SEGMENT'].isin(['NSE_EQ'])][sym_col].unique()
+        selected_symbol = st.selectbox("Scrip", options=options)
+    else:
+        selected_symbol = st.text_input("Scrip", "NIFTY")
+
+# 3. Calculation Engine (Lightweight)
+def calculate_metrics(df, spot):
+    # Greeks simulation logic (Without Heavy Styler)
+    df['Delta'] = 0.5 
+    df['GEX'] = df['CE_OI'] * 0.001
+    return df
+
+# Mock Data Generation
+strikes = np.arange(24000, 25000, 50)
+df = pd.DataFrame({
+    'Strike': strikes,
+    'CE_OI': np.random.randint(100000, 900000, len(strikes)),
+    'CE_LTP': np.random.uniform(50, 400, len(strikes)),
+    'PE_LTP': np.random.uniform(50, 400, len(strikes)),
+    'PE_OI': np.random.randint(100000, 900000, len(strikes))
+})
+df = calculate_metrics(df, 24580)
+
+# 4. Metrics & Data Display
+m1, m2 = st.columns(2)
+m1.metric("Spot Price", "24,583")
+m2.metric("PCR", "1.09")
+
+# Mobile friendly display
+st.dataframe(df, use_container_width=True)
+
+# Auto Refresh
+if st.checkbox("Auto Refresh"):
+    time.sleep(3)
+    st.rerun()
