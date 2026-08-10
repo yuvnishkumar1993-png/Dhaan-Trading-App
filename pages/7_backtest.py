@@ -134,7 +134,7 @@ with col_c2:
     selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="term_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
-# --- 2. EXACT 2026 LOT SIZE AUTO-DETECTION ---
+# --- 2. EXACT 2026 LOT SIZE AUTO-DETECTION (सेंसेक्स = 20) ---
 def fetch_exact_lot(symbol):
     sym_upper = symbol.upper()
     if sym_upper in lot_mapping:
@@ -442,6 +442,6 @@ def render_institutional_terminal():
     # --- 4. VISUAL OI BUILD-UP CHART (Plotly) ---
     if HAS_PLOTLY:
         st.markdown("### 📈 Open Interest (OI) Distribution Chart")
-        chart_df = chain_df.tail(30).head(15).copy() # आस-पास के स्ट्राइक्स का विजुअल
+        chart_df = chain_df.tail(30).head(15).copy()
         fig = go.Figure()
-        fig.add_trace(
+        fig.add_trace(go.Bar(x=chart_df
