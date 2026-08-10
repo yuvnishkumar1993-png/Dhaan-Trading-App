@@ -40,16 +40,11 @@ except ImportError:
                 return pd.DataFrame()
         @staticmethod
         def fetch_expiries(c, a, s, seg):
-            today = datetime.now()
-            days_to_thu = (3 - today.weekday() + 7) % 7
-            if days_to_thu == 0: days_to_thu = 7
-            next_thu = today + timedelta(days=days_to_thu)
-            return [(next_thu + timedelta(weeks=i)).strftime("%Y-%m-%d") for i in range(4)]
+            return [datetime.now().strftime("%Y-%m-%d")]
         @staticmethod
         def fetch_live_option_chain(c, a, s, seg, exp, sym):
             return None, 0.0
 
-# Import Backend Functions from File 1
 try:
     from quant_utils import calculate_advanced_metrics, calculate_max_pain
 except ImportError:
@@ -113,6 +108,10 @@ with col_c3:
 with col_c4:
     show_greeks = st.checkbox("Show Quant Metrics", value=True)
 
+# Detect if selected symbol is a Future
+if "FUT" in selected_symbol.upper():
+    st.warning(f"⚠️ **{selected_symbol}** एक Futures कॉन्ट्रैक्ट है। ऑप्शन चेन और क्वांट चार्ट्स देखने के लिए कृपया कोई Index या F&O Stock (ऑप्शन वाला सिंबल) चुनें।")
+
 try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
         client_id, access_token, sec_id, seg, selected_expiry, selected_symbol
@@ -120,7 +119,7 @@ try:
 except Exception:
     chain_df, live_spot = None, 0.0
 
-if chain_df is None or chain_df.empty or live_spot <= 0:
+if chain_df is None or chain_df.empty or live_spot <= 0 or 'Strike' not in chain_df.columns:
     live_spot, base_st = 24583.80, 24600
     strikes = np.arange(base_st - 1000, base_st + 1050, 50)
     recs = [{"Strike": int(st_val), "STRIKE": int(st_val), "Raw_CE_OI": 500000, "Raw_PE_OI": 600000, "CE_Volume": 1000000, "PE_Volume": 1200000, "CE_IV": 13.0, "PE_IV": 13.5} for st_val in strikes]
