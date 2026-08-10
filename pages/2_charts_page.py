@@ -11,7 +11,6 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
-# utils.py से फंक्शन्स इम्पोर्ट करना
 from utils import (
     fetch_available_expiries,
     fetch_market_option_chain, 
@@ -29,7 +28,6 @@ st.set_page_config(
 st.markdown("## ⚡ Institutional Quant Terminal Pro")
 st.markdown("---")
 
-# Asset configuration mapping
 master_dict = {
     "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 65},
     "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 15},
@@ -41,19 +39,22 @@ master_dict = {
 # --- GLOBAL CONTROLS ---
 col_h1, col_h2, col_h3, col_h4 = st.columns([2, 2, 2, 2])
 with col_h1:
-    selected_symbol = st.selectbox("📌 Asset", list(master_dict.keys()))
+    selected_symbol = st.selectbox("📌 Asset", list(master_dict.keys()), key="sel_asset")
 
 cfg = master_dict.get(selected_symbol, {"sec_id": 13, "seg": "IDX_I", "lot": 65})
 
-# ऑटोमैटिक एक्सपायरी फेच करना
+# ऑटोमैटिक एक्सपायरी फेच करना और सॉर्ट करना
 expiries = fetch_available_expiries(client_id="", access_token="", sec_id=cfg["sec_id"], seg=cfg["seg"])
 
 with col_h2:
-    selected_expiry = st.selectbox("📅 Expiry", expiries)
+    # हमेशा सबसे पहली (सबसे नजदीक की) एक्सपायरी को ऑटो-सेलेक्ट करना (index=0)
+    selected_expiry = st.selectbox("📅 Expiry", expiries, index=0, key=f"sel_exp_{selected_symbol}")
+
 with col_h3:
-    active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: Sensibull-Style Analytics & Graphs"])
+    active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: Sensibull-Style Analytics & Graphs"], key="sel_page")
+
 with col_h4:
-    lot_size = st.number_input("⚙️ Lot Size", min_value=1, value=int(cfg["lot"]))
+    lot_size = st.number_input("⚙️ Lot Size", min_value=1, value=int(cfg["lot"]), key="sel_lot")
 
 # --- FETCH REAL / DYNAMIC DATA FROM UTILS ---
 raw_df, live_spot = fetch_market_option_chain(
@@ -134,7 +135,7 @@ elif "Page 2" in active_page:
 
         st.markdown("---")
 
-        # --- GRAPH 2: Implied Volatility (IV) Smile / Skew Chart ---
+        # --- GRAPH 2: Implied Volatility (IV) Smile / Skew Curve ---
         st.markdown("#### 📉 2. Implied Volatility (IV) Smile & Skew Curve")
         fig_iv = go.Figure()
         fig_iv.add_trace(go.Scatter(
