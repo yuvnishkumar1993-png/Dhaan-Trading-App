@@ -2,21 +2,14 @@ import os
 import sys
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
 
 # --- SAFE PATH RESOLUTION ---
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
-from utils import (
-    fetch_available_expiries,
-    fetch_market_option_chain, 
-    calculate_max_pain, 
-    calculate_advanced_metrics
-)
+from utils import fetch_available_expiries, get_fully_processed_data
 
 # Page Configuration
 st.set_page_config(
@@ -43,30 +36,24 @@ with col_h1:
 
 cfg = master_dict.get(selected_symbol, {"sec_id": 13, "seg": "IDX_I", "lot": 65})
 
-# ऑटोमैटिक एक्सपायरी फेच करना और सॉर्ट करना
+# एक्सपायरी फेच करना और सॉर्ट करना
 expiries = fetch_available_expiries(client_id="", access_token="", sec_id=cfg["sec_id"], seg=cfg["seg"])
 
 with col_h2:
-    # हमेशा सबसे पहली (सबसे नजदीक की) एक्सपायरी को ऑटो-सेलेक्ट करना (index=0)
     selected_expiry = st.selectbox("📅 Expiry", expiries, index=0, key=f"sel_exp_{selected_symbol}")
-
 with col_h3:
     active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: Sensibull-Style Analytics & Graphs"], key="sel_page")
-
 with col_h4:
     lot_size = st.number_input("⚙️ Lot Size", min_value=1, value=int(cfg["lot"]), key="sel_lot")
 
-# --- FETCH REAL / DYNAMIC DATA FROM UTILS ---
-raw_df, live_spot = fetch_market_option_chain(
+# --- MASTER PIPELINE CALL (सारे डेटा और कैलकुलेशन एक बार में) ---
+chain_df, metrics = get_fully_processed_data(
     client_id="", access_token="", 
     sec_id=cfg["sec_id"], seg=cfg["seg"], 
-    expiry=selected_expiry, symbol=selected_symbol
+    expiry=selected_expiry, symbol=selected_symbol, lot_size=lot_size
 )
 
-if raw_df is not None and not raw_df.empty:
-    chain_df = calculate_advanced_metrics(raw_df, live_spot, lot_size)
-else:
-    chain_df = pd.DataFrame()
+live_spot = metrics.get("live_spot", 24500.0)
 
 # ==========================================
 # PAGE 1: CORE OPTION CHAIN TABLE
@@ -88,24 +75,12 @@ elif "Page 2" in active_page:
     st.markdown("---")
     
     if not chain_df.empty:
-        total_call_oi = chain_df['Raw_CE_OI'].sum()
-        total_put_oi = chain_df['Raw_PE_OI'].sum()
-        pcr = round(total_put_oi / total_call_oi, 3) if total_call_oi > 0 else 0
-        
-        max_pain_strike = calculate_max_pain(chain_df, live_spot)
-
-        max_call_row = chain_df.loc[chain_df['Raw_CE_OI'].idxmax()]
-        max_put_row = chain_df.loc[chain_df['Raw_PE_OI'].idxmax()]
-        
-        immediate_resistance = int(max_call_row['Strike'])
-        immediate_support = int(max_put_row['Strike'])
-
         # Top Macro KPI Cards
         m1, m2, m3, m4 = st.columns(4)
-        with m1: st.metric("Live PCR", pcr, delta="Bullish" if pcr > 1.1 else "Bearish")
-        with m2: st.metric("Max Pain Strike", f"{max_pain_strike:,}")
-        with m3: st.metric("Immediate Resistance", f"{immediate_resistance:,}", delta="Max Call OI")
-        with m4: st.metric("Immediate Support", f"{immediate_support:,}", delta="Max Put OI")
+        with m1: st.metric("Live PCR", metrics.get("pcr", 0), delta="Bullish" if metrics.get("pcr", 0) > 1.1 else "Bearish")
+        with m2: st.metric("Max Pain Strike", f"{metrics.get('max_pain', 0):,}")
+        with m3: st.metric("Immediate Resistance", f"{metrics.get('resistance', 0):,}", delta="Max Call OI")
+        with m4: st.metric("Immediate Support", f"{metrics.get('support', 0):,}", delta="Max Put OI")
         
         st.markdown("---")
 
