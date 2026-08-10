@@ -123,37 +123,35 @@ try:
     )
 except Exception:
     chain_df = pd.DataFrame()
-    live_spot = 24570.65
+    live_spot = 24583.80
 
 if chain_df is None or chain_df.empty:
-    spot_val = 24570.65
-    strikes = np.arange(23500, 25500, 50)
+    spot_val = 24583.80
+    strikes = np.arange(24000, 25200, 50)
     recs = []
     for st_val in strikes:
         recs.append({
             "Strike": int(st_val), "STRIKE": int(st_val),
-            "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 14.0, "CE_LTP": max(1.0, 24570.65 - st_val + 50),
-            "PE_LTP": max(1.0, st_val - 24570.65 + 50), "PE_IV": 14.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
+            "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot_val - st_val + 20),
+            "PE_LTP": max(1.0, st_val - spot_val + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
         })
     chain_df = pd.DataFrame(recs)
     live_spot = spot_val
 
-# Normalize columns safely
-if "Raw_CE_OI" not in chain_df.columns:
-    if "CE_OI" in chain_df.columns:
-        chain_df["Raw_CE_OI"] = chain_df["CE_OI"]
-    elif "Call_OI" in chain_df.columns:
-        chain_df["Raw_CE_OI"] = chain_df["Call_OI"]
-    else:
-        chain_df["Raw_CE_OI"] = 100000
+# --- DATA SANITIZATION LAYER (कच्चे डेटा को साफ़ और व्यवस्थित करना) ---
+strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
+chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
+chain_df.dropna(subset=['Strike'], inplace=True)
 
-if "Raw_PE_OI" not in chain_df.columns:
-    if "PE_OI" in chain_df.columns:
-        chain_df["Raw_PE_OI"] = chain_df["PE_OI"]
-    elif "Put_OI" in chain_df.columns:
-        chain_df["Raw_PE_OI"] = chain_df["Put_OI"]
-    else:
-        chain_df["Raw_PE_OI"] = 100000
+# सुरक्षित कॉलम मैपिंग
+for prefix in ['CE_', 'PE_']:
+    oi_key = f"{prefix}OI"
+    raw_key = f"Raw_{prefix}OI"
+    if raw_key not in chain_df.columns:
+        if oi_key in chain_df.columns:
+            chain_df[raw_key] = pd.to_numeric(chain_df[oi_key], errors='coerce').fillna(100000)
+        else:
+            chain_df[raw_key] = 100000
 
 # Math Helper functions for Normal CDF and PDF
 def norm_cdf(x):
@@ -175,17 +173,17 @@ def calculate_advanced_metrics(df, spot, lot):
     ce_turnovers, pe_turnovers = [], []
     
     for _, row in df.iterrows():
-        K = row.get('Strike', row.get('STRIKE', spot))
-        call_oi = row.get('Raw_CE_OI', row.get('CE_OI', row.get('Call_OI', 100000)))
-        put_oi = row.get('Raw_PE_OI', row.get('PE_OI', row.get('Put_OI', 100000)))
+        K = row['Strike']
+        call_oi = row.get('Raw_CE_OI', 100000)
+        put_oi = row.get('Raw_PE_OI', 100000)
         
-        c_ltp = row.get('CE_LTP', row.get('Call_LTP', 10.0))
-        p_ltp = row.get('PE_LTP', row.get('Put_LTP', 10.0))
-        c_vol = row.get('CE_Volume', row.get('Call_Volume', 100000))
-        p_vol = row.get('PE_Volume', row.get('Put_Volume', 100000))
+        c_ltp = row.get('CE_LTP', 10.0)
+        p_ltp = row.get('PE_LTP', 10.0)
+        c_vol = row.get('CE_Volume', 100000)
+        p_vol = row.get('PE_Volume', 100000)
         
-        c_iv = max(5.0, row.get('CE_IV', row.get('Call_IV', 14.0))) / 100.0
-        p_iv = max(5.0, row.get('PE_IV', row.get('Put_IV', 14.5))) / 100.0
+        c_iv = max(5.0, row.get('CE_IV', 13.0)) / 100.0
+        p_iv = max(5.0, row.get('PE_IV', 13.5)) / 100.0
         sigma = (c_iv + p_iv) / 2.0
         
         try:
@@ -247,40 +245,30 @@ def calculate_advanced_metrics(df, spot, lot):
 
 chain_df = calculate_advanced_metrics(chain_df, live_spot, lot_size)
 
-# Ensure Strike column exists
-strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
-
 # Strike filtering
+chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
 if "±5" in strike_range_mode:
-    chain_df['Dist'] = abs(chain_df[strike_col] - live_spot)
     center_idx = chain_df['Dist'].idxmin()
     disp_df = chain_df.iloc[max(0, center_idx-5):min(len(chain_df), center_idx+6)].copy()
 elif "±10" in strike_range_mode:
-    chain_df['Dist'] = abs(chain_df[strike_col] - live_spot)
     center_idx = chain_df['Dist'].idxmin()
     disp_df = chain_df.iloc[max(0, center_idx-10):min(len(chain_df), center_idx+11)].copy()
 elif "±20" in strike_range_mode:
-    chain_df['Dist'] = abs(chain_df[strike_col] - live_spot)
     center_idx = chain_df['Dist'].idxmin()
     disp_df = chain_df.iloc[max(0, center_idx-20):min(len(chain_df), center_idx+21)].copy()
 elif "±30" in strike_range_mode:
-    chain_df['Dist'] = abs(chain_df[strike_col] - live_spot)
     center_idx = chain_df['Dist'].idxmin()
     disp_df = chain_df.iloc[max(0, center_idx-30):min(len(chain_df), center_idx+31)].copy()
 else:
     disp_df = chain_df.copy()
 
 # Summary Metrics Bar
-disp_df['View_Dist'] = abs(disp_df[strike_col] - live_spot)
-atm_row = disp_df.loc[disp_df['View_Dist'].idxmin()]
-ce_iv_val = atm_row.get('CE_IV', atm_row.get('Call_IV', 14.0))
-pe_iv_val = atm_row.get('PE_IV', atm_row.get('Put_IV', 14.5))
-atm_iv = round((ce_iv_val + pe_iv_val) / 2.0, 2)
-disp_df = disp_df.drop(columns=['View_Dist'])
+atm_row = disp_df.loc[disp_df['Dist'].idxmin()]
+atm_iv = round((atm_row.get('CE_IV', 13.0) + atm_row.get('PE_IV', 13.5)) / 2.0, 2)
 
-f_ce_oi = disp_df['Raw_CE_OI'].sum() if 'Raw_CE_OI' in disp_df.columns else (disp_df['CE_OI'].sum() if 'CE_OI' in disp_df.columns else disp_df['Call_OI'].sum())
-f_pe_oi = disp_df['Raw_PE_OI'].sum() if 'Raw_PE_OI' in disp_df.columns else (disp_df['PE_OI'].sum() if 'PE_OI' in disp_df.columns else disp_df['Put_OI'].sum())
-pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 1.0
+f_ce_oi = disp_df['Raw_CE_OI'].sum()
+f_pe_oi = disp_df['Raw_PE_OI'].sum()
+pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
 
 st.markdown("---")
 m1, m2, m3, m4 = st.columns(4)
@@ -297,49 +285,39 @@ def get_buildup(chg_oi, pct_chg):
     elif pct_chg > 0 and chg_oi < 0: return "Short Cover"
     return "Long Build"
 
-disp_df['CE Build'] = disp_df.apply(lambda r: get_buildup(r.get('CE_Chg_OI', r.get('Call_Chg_OI', 0)), r.get('CE_%Chg', 0)), axis=1)
-disp_df['PE Build'] = disp_df.apply(lambda r: get_buildup(r.get('PE_Chg_OI', r.get('Put_Chg_OI', 0)), r.get('PE_%Chg', 0)), axis=1)
+disp_df['CE Build'] = disp_df.apply(lambda r: get_buildup(r.get('CE_Chg_OI', 0), r.get('CE_%Chg', 0)), axis=1)
+disp_df['PE Build'] = disp_df.apply(lambda r: get_buildup(r.get('PE_Chg_OI', 0), r.get('PE_%Chg', 0)), axis=1)
 
-# Format columns for display
-disp_df['STRIKE'] = disp_df[strike_col]
-disp_df['CE OI (L)'] = round(disp_df.get('Raw_CE_OI', disp_df.get('CE_OI', disp_df.get('Call_OI', 0))) / 100000, 2)
-disp_df['PE OI (L)'] = round(disp_df.get('Raw_PE_OI', disp_df.get('PE_OI', disp_df.get('Put_OI', 0))) / 100000, 2)
-disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', disp_df.get('Call_Volume', 0)) / 1000000, 2)
-disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', disp_df.get('Put_Volume', 0)) / 1000000, 2)
+# Format columns for display cleanly
+disp_df['STRIKE'] = disp_df['Strike']
+disp_df['CE OI (L)'] = round(disp_df['Raw_CE_OI'] / 100000, 2)
+disp_df['PE OI (L)'] = round(disp_df['Raw_PE_OI'] / 100000, 2)
+disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', 100000) / 1000000, 2)
+disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', 100000) / 1000000, 2)
 
-disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', disp_df.get('Call_Chg_OI', 0))
-disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', disp_df.get('Put_Chg_OI', 0))
+disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', 0)
+disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', 0)
 disp_df['CE OI Chg %'] = disp_df.get('CE_%Chg', 0.0)
 disp_df['PE OI Chg %'] = disp_df.get('PE_%Chg', 0.0)
 
-disp_df['CE Vol Chg'] = round(disp_df['CE Vol (M)'] * 0.1, 2)
-disp_df['PE Vol Chg'] = round(disp_df['PE Vol (M)'] * 0.1, 2)
-disp_df['CE Vol Chg %'] = 1.2
-disp_df['PE Vol Chg %'] = -0.5
+disp_df['CE Bid'] = round(disp_df['CE_LTP'] * 0.99, 2)
+disp_df['CE Ask'] = round(disp_df['CE_LTP'] * 1.01, 2)
+disp_df['PE Bid'] = round(disp_df['PE_LTP'] * 0.99, 2)
+disp_df['PE Ask'] = round(disp_df['PE_LTP'] * 1.01, 2)
 
-ce_ltp_series = disp_df.get('CE_LTP', disp_df.get('Call_LTP', 10.0))
-pe_ltp_series = disp_df.get('PE_LTP', disp_df.get('Put_LTP', 10.0))
-
-disp_df['CE Bid'] = round(ce_ltp_series * 0.99, 2)
-disp_df['CE Ask'] = round(ce_ltp_series * 1.01, 2)
-disp_df['PE Bid'] = round(pe_ltp_series * 0.99, 2)
-disp_df['PE Ask'] = round(pe_ltp_series * 1.01, 2)
-
-disp_df['CE Spread %'] = np.where(ce_ltp_series > 0, round(((disp_df['CE Ask'] - disp_df['CE Bid']) / ce_ltp_series) * 100, 2), 0.0)
-disp_df['PE Spread %'] = np.where(pe_ltp_series > 0, round(((disp_df['PE Ask'] - disp_df['PE Bid']) / pe_ltp_series) * 100, 2), 0.0)
-disp_df['CE_LTP'] = ce_ltp_series
-disp_df['PE_LTP'] = pe_ltp_series
+disp_df['CE Spread %'] = np.where(disp_df['CE_LTP'] > 0, round(((disp_df['CE Ask'] - disp_df['CE Bid']) / disp_df['CE_LTP']) * 100, 2), 0.0)
+disp_df['PE Spread %'] = np.where(disp_df['PE_LTP'] > 0, round(((disp_df['PE Ask'] - disp_df['PE Bid']) / disp_df['PE_LTP']) * 100, 2), 0.0)
 
 # --- MATRIX LAYOUT ---
 if show_greeks:
     matrix_cols = [
         "CE Build", "CE GEX (Cr)", "CE Charm", "CE Vanna", "CE Vega", "CE Theta", "Gamma", "CE Delta",
-        "CE Vol Chg %", "CE Vol Chg", "CE Vol (M)", "CE Turnover (Cr)", "CE OI Chg %", "CE OI Chg", "CE OI (L)",
+        "CE Vol (M)", "CE Turnover (Cr)", "CE OI Chg %", "CE OI Chg", "CE OI (L)",
         "CE Spread %", "CE Ask", "CE Bid", "CE_LTP"
     ]
 else:
     matrix_cols = [
-        "CE Build", "CE Vol Chg %", "CE Vol Chg", "CE Vol (M)", "CE Turnover (Cr)", "CE OI Chg %", "CE OI Chg", "CE OI (L)",
+        "CE Build", "CE Vol (M)", "CE Turnover (Cr)", "CE OI Chg %", "CE OI Chg", "CE OI (L)",
         "CE Spread %", "CE Ask", "CE Bid", "CE_LTP"
     ]
 
@@ -348,13 +326,13 @@ matrix_cols += ["STRIKE"]
 if show_greeks:
     matrix_cols += [
         "PE_LTP", "PE Bid", "PE Ask", "PE Spread %",
-        "PE OI (L)", "PE OI Chg", "PE OI Chg %", "PE Turnover (Cr)", "PE Vol (M)", "PE Vol Chg", "PE Vol Chg %",
+        "PE OI (L)", "PE OI Chg", "PE OI Chg %", "PE Turnover (Cr)", "PE Vol (M)",
         "PE Delta", "Gamma", "PE Theta", "PE Vega", "PE Vanna", "PE Charm", "PE GEX (Cr)", "PE Build"
     ]
 else:
     matrix_cols += [
         "PE_LTP", "PE Bid", "PE Ask", "PE Spread %",
-        "PE OI (L)", "PE OI Chg", "PE OI Chg %", "PE Turnover (Cr)", "PE Vol (M)", "PE Vol Chg", "PE Vol Chg %", "PE Build"
+        "PE OI (L)", "PE OI Chg", "PE OI Chg %", "PE Turnover (Cr)", "PE Vol (M)", "PE Build"
     ]
 
 final_cols = [c for c in matrix_cols if c in disp_df.columns]
