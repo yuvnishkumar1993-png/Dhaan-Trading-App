@@ -20,7 +20,9 @@ if ROOT_DIR not in sys.path:
 
 try:
     from dhan_api import InstitutionalDataEngine
+    API_AVAILABLE = True
 except ImportError:
+    API_AVAILABLE = False
     class InstitutionalDataEngine:
         @staticmethod
         def load_scrip_master():
@@ -30,14 +32,15 @@ except ImportError:
             return [datetime.now().strftime("%Y-%m-%d")]
         @staticmethod
         def fetch_live_option_chain(c, a, s, seg, exp, sym):
+            # यह सिर्फ तब चलेगा जब dhan_api फाइल नहीं मिलेगी
             spot = 24583.80
             strikes = np.arange(24000, 25200, 50)
             recs = []
             for st_val in strikes:
                 recs.append({
-                    "Strike": int(st_val), "STRIKE": int(st_val),
-                    "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot - st_val + 20),
-                    "PE_LTP": max(1.0, st_val - spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
+                    "Strike": int(st_val),
+                    "CE_OI": 500000, "CE_Chg_OI": 12000, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot - st_val + 20),
+                    "PE_LTP": max(1.0, st_val - spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_OI": 600000
                 })
             return pd.DataFrame(recs), spot
 
@@ -61,6 +64,9 @@ st.markdown("""
 
 st.markdown("## ⚡ Institutional Quant Terminal Pro")
 st.markdown("---")
+
+if not API_AVAILABLE:
+    st.warning("⚠️ Warning: `dhan_api.py` not found in root path. Running on fallback simulation mode. Please ensure your API file is correctly placed.")
 
 # Session State Check
 if "client_id" not in st.session_state:
@@ -113,7 +119,8 @@ try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
         client_id, access_token, sec_id, seg, selected_expiry, selected_symbol
     )
-except Exception:
+except Exception as e:
+    st.error(f"Error fetching live data from API: {e}")
     chain_df = pd.DataFrame()
     live_spot = 24583.80
 
@@ -123,33 +130,95 @@ if chain_df is None or chain_df.empty:
     recs = []
     for st_val in strikes:
         recs.append({
-            "Strike": int(st_val), "STRIKE": int(st_val),
-            "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot_val - st_val + 20),
-            "PE_LTP": max(1.0, st_val - spot_val + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
+            "Strike": int(st_val),
+            "CE_OI": 500000, "CE_Chg_OI": 12000, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot_val - st_val + 20),
+            "PE_LTP": max(1.0, st_val - spot_val + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_OI": 600000
         })
     chain_df = pd.DataFrame(recs)
     live_spot = spot_val
 
-# --- NORMALIZATION ---
-strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
-chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
-chain_df.dropna(subset=['Strike'], inplace=True)
+# --- ROBUST AUTO-NORMALIZATION ENGINE (डेटा को सही करने वाला इंजन) ---
+def normalize_option_chain_data(df):
+    if df.empty:
+        return df
+    
+    # कॉलम नामों को क्लीन करना
+    df.columns = [str(c).strip() for c in df.columns]
+    
+    # 1. Strike Column ढूंढना
+    strike_candidates = ['Strike', 'STRIKE', 'strike_price', 'StrikePrice', 'strike']
+    found_strike = None
+    for sc in strike_candidates:
+        if sc in df.columns:
+            found_strike = sc
+            break
+    if found_strike and found_strike != 'Strike':
+        df['Strike'] = pd.to_numeric(df[found_strike], errors='coerce')
+    elif 'Strike' in df.columns:
+        df['Strike'] = pd.to_numeric(df['Strike'], errors='coerce')
+    else:
+        df['Strike'] = df.iloc[:, 0] # पहला कॉलम मान लो
+        
+    df.dropna(subset=['Strike'], inplace=True)
+    df['STRIKE'] = df['Strike']
 
-if 'CE_LTP' not in chain_df.columns and 'Call_LTP' in chain_df.columns:
-    chain_df['CE_LTP'] = chain_df['Call_LTP']
-elif 'CE_LTP' not in chain_df.columns:
-    chain_df['CE_LTP'] = 10.0
+    # 2. Call & Put LTP Mapping
+    for target, candidates in [
+        ('CE_LTP', ['CE_LTP', 'Call_LTP', 'call_ltp', 'CE_Price', 'CE_Close']),
+        ('PE_LTP', ['PE_LTP', 'Put_LTP', 'put_ltp', 'PE_Price', 'PE_Close'])
+    ]:
+        if target not in df.columns:
+            for cand in candidates:
+                if cand in df.columns:
+                    df[target] = pd.to_numeric(df[cand], errors='coerce')
+                    break
+            if target not in df.columns:
+                df[target] = 10.0
 
-if 'PE_LTP' not in chain_df.columns and 'Put_LTP' in chain_df.columns:
-    chain_df['PE_LTP'] = chain_df['Put_LTP']
-elif 'PE_LTP' not in chain_df.columns:
-    chain_df['PE_LTP'] = 10.0
+    # 3. Call & Put OI Mapping
+    for target, candidates in [
+        ('Raw_CE_OI', ['Raw_CE_OI', 'CE_OI', 'Call_OI', 'call_oi', 'CE_OpenInterest']),
+        ('Raw_PE_OI', ['Raw_PE_OI', 'PE_OI', 'Put_OI', 'put_oi', 'PE_OpenInterest'])
+    ]:
+        if target not in df.columns:
+            for cand in candidates:
+                if cand in df.columns:
+                    df[target] = pd.to_numeric(df[cand], errors='coerce').fillna(100000)
+                    break
+            if target not in df.columns:
+                df[target] = 100000
 
-if 'Raw_CE_OI' not in chain_df.columns:
-    chain_df['Raw_CE_OI'] = chain_df.get('CE_OI', chain_df.get('Call_OI', 100000))
+    # 4. Call & Put Change in OI Mapping
+    for target, candidates in [
+        ('CE_Chg_OI', ['CE_Chg_OI', 'Call_Chg_OI', 'ce_chg_oi', 'CE_Change_OI']),
+        ('PE_Chg_OI', ['PE_Chg_OI', 'Put_Chg_OI', 'pe_chg_oi', 'PE_Change_OI'])
+    ]:
+        if target not in df.columns:
+            for cand in candidates:
+                if cand in df.columns:
+                    df[target] = pd.to_numeric(df[cand], errors='coerce').fillna(0)
+                    break
+            if target not in df.columns:
+                df[target] = 0
 
-if 'Raw_PE_OI' not in chain_df.columns:
-    chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
+    # 5. Volume & IV Mapping
+    for target, candidates in [
+        ('CE_Volume', ['CE_Volume', 'Call_Volume', 'ce_volume']),
+        ('PE_Volume', ['PE_Volume', 'Put_Volume', 'pe_volume']),
+        ('CE_IV', ['CE_IV', 'Call_IV', 'ce_iv']),
+        ('PE_IV', ['PE_IV', 'Put_IV', 'pe_iv'])
+    ]:
+        if target not in df.columns:
+            for cand in candidates:
+                if cand in df.columns:
+                    df[target] = pd.to_numeric(df[cand], errors='coerce').fillna(10.0)
+                    break
+            if target not in df.columns:
+                df[target] = 10.0 if 'IV' in target else 100000
+
+    return df
+
+chain_df = normalize_option_chain_data(chain_df)
 
 # Math Helpers
 def norm_cdf(x):
@@ -158,7 +227,7 @@ def norm_cdf(x):
 def norm_pdf(x):
     return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
-# Advanced Quant Engine for Greeks & GEX (Unique Columns)
+# Advanced Quant Engine for Greeks & GEX
 def calculate_advanced_metrics(df, spot, lot):
     r = 0.06 
     T = 2 / 365.0
@@ -229,7 +298,6 @@ if "Page 1" in active_page:
     else:
         disp_df = chain_df.copy()
 
-    disp_df['STRIKE'] = disp_df['Strike']
     disp_df['CE OI (L)'] = round(disp_df['Raw_CE_OI'] / 100000, 2)
     disp_df['PE OI (L)'] = round(disp_df['Raw_PE_OI'] / 100000, 2)
     disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', 100000) / 1000000, 2)
