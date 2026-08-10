@@ -5,6 +5,8 @@ import pandas as pd
 import numpy as np
 import math
 from datetime import datetime
+import plotly.graph_objects as go
+import plotly.express as px
 
 # Page Configuration
 st.set_page_config(
@@ -32,15 +34,14 @@ except ImportError:
             return [datetime.now().strftime("%Y-%m-%d")]
         @staticmethod
         def fetch_live_option_chain(c, a, s, seg, exp, sym):
-            # यह सिर्फ तब चलेगा जब dhan_api फाइल नहीं मिलेगी
             spot = 24583.80
             strikes = np.arange(24000, 25200, 50)
             recs = []
             for st_val in strikes:
                 recs.append({
                     "Strike": int(st_val),
-                    "CE_OI": 500000, "CE_Chg_OI": 12000, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot - st_val + 20),
-                    "PE_LTP": max(1.0, st_val - spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_OI": 600000
+                    "CE_OI": np.random.randint(100000, 2000000), "CE_Chg_OI": np.random.randint(-50000, 150000), "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot - st_val + 20),
+                    "PE_LTP": max(1.0, st_val - spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": np.random.randint(-50000, 150000), "PE_OI": np.random.randint(100000, 2000000)
                 })
             return pd.DataFrame(recs), spot
 
@@ -66,7 +67,7 @@ st.markdown("## ⚡ Institutional Quant Terminal Pro")
 st.markdown("---")
 
 if not API_AVAILABLE:
-    st.warning("⚠️ Warning: `dhan_api.py` not found in root path. Running on fallback simulation mode. Please ensure your API file is correctly placed.")
+    st.warning("⚠️ Warning: `dhan_api.py` not found. Running on simulation mode.")
 
 # Session State Check
 if "client_id" not in st.session_state:
@@ -109,7 +110,7 @@ with col_h2:
     selected_expiry = st.selectbox("📅 Expiry", expiries, index=0, key=f"exp_{selected_symbol}")
 
 with col_h3:
-    active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: OI Support, Resistance & Shift Tracker"])
+    active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: Sensibull-Style OI & Analytics Dashboard"])
 
 with col_h4:
     lot_size = st.number_input("⚙️ Lot Size", min_value=1, max_value=10000, value=int(server_lot), step=1)
@@ -120,7 +121,7 @@ try:
         client_id, access_token, sec_id, seg, selected_expiry, selected_symbol
     )
 except Exception as e:
-    st.error(f"Error fetching live data from API: {e}")
+    st.error(f"Error fetching live data: {e}")
     chain_df = pd.DataFrame()
     live_spot = 24583.80
 
@@ -131,67 +132,37 @@ if chain_df is None or chain_df.empty:
     for st_val in strikes:
         recs.append({
             "Strike": int(st_val),
-            "CE_OI": 500000, "CE_Chg_OI": 12000, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot_val - st_val + 20),
-            "PE_LTP": max(1.0, st_val - spot_val + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_OI": 600000
+            "CE_OI": np.random.randint(100000, 2000000), "CE_Chg_OI": np.random.randint(-50000, 150000), "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot_val - st_val + 20),
+            "PE_LTP": max(1.0, st_val - spot_val + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": np.random.randint(-50000, 150000), "PE_OI": np.random.randint(100000, 2000000)
         })
     chain_df = pd.DataFrame(recs)
     live_spot = spot_val
 
-# --- ROBUST AUTO-NORMALIZATION ENGINE (डेटा को सही करने वाला इंजन) ---
+# --- NORMALIZATION ENGINE ---
 def normalize_option_chain_data(df):
     if df.empty:
         return df
-    
-    # कॉलम नामों को क्लीन करना
     df.columns = [str(c).strip() for c in df.columns]
     
-    # 1. Strike Column ढूंढना
     strike_candidates = ['Strike', 'STRIKE', 'strike_price', 'StrikePrice', 'strike']
-    found_strike = None
     for sc in strike_candidates:
         if sc in df.columns:
-            found_strike = sc
+            df['Strike'] = pd.to_numeric(df[sc], errors='coerce')
             break
-    if found_strike and found_strike != 'Strike':
-        df['Strike'] = pd.to_numeric(df[found_strike], errors='coerce')
-    elif 'Strike' in df.columns:
-        df['Strike'] = pd.to_numeric(df['Strike'], errors='coerce')
-    else:
-        df['Strike'] = df.iloc[:, 0] # पहला कॉलम मान लो
-        
+    if 'Strike' not in df.columns:
+        df['Strike'] = df.iloc[:, 0]
     df.dropna(subset=['Strike'], inplace=True)
     df['STRIKE'] = df['Strike']
 
-    # 2. Call & Put LTP Mapping
     for target, candidates in [
-        ('CE_LTP', ['CE_LTP', 'Call_LTP', 'call_ltp', 'CE_Price', 'CE_Close']),
-        ('PE_LTP', ['PE_LTP', 'Put_LTP', 'put_ltp', 'PE_Price', 'PE_Close'])
-    ]:
-        if target not in df.columns:
-            for cand in candidates:
-                if cand in df.columns:
-                    df[target] = pd.to_numeric(df[cand], errors='coerce')
-                    break
-            if target not in df.columns:
-                df[target] = 10.0
-
-    # 3. Call & Put OI Mapping
-    for target, candidates in [
-        ('Raw_CE_OI', ['Raw_CE_OI', 'CE_OI', 'Call_OI', 'call_oi', 'CE_OpenInterest']),
-        ('Raw_PE_OI', ['Raw_PE_OI', 'PE_OI', 'Put_OI', 'put_oi', 'PE_OpenInterest'])
-    ]:
-        if target not in df.columns:
-            for cand in candidates:
-                if cand in df.columns:
-                    df[target] = pd.to_numeric(df[cand], errors='coerce').fillna(100000)
-                    break
-            if target not in df.columns:
-                df[target] = 100000
-
-    # 4. Call & Put Change in OI Mapping
-    for target, candidates in [
-        ('CE_Chg_OI', ['CE_Chg_OI', 'Call_Chg_OI', 'ce_chg_oi', 'CE_Change_OI']),
-        ('PE_Chg_OI', ['PE_Chg_OI', 'Put_Chg_OI', 'pe_chg_oi', 'PE_Change_OI'])
+        ('CE_LTP', ['CE_LTP', 'Call_LTP', 'call_ltp']),
+        ('PE_LTP', ['PE_LTP', 'Put_LTP', 'put_ltp']),
+        ('Raw_CE_OI', ['Raw_CE_OI', 'CE_OI', 'Call_OI', 'call_oi']),
+        ('Raw_PE_OI', ['Raw_PE_OI', 'PE_OI', 'Put_OI', 'put_oi']),
+        ('CE_Chg_OI', ['CE_Chg_OI', 'Call_Chg_OI', 'ce_chg_oi']),
+        ('PE_Chg_OI', ['PE_Chg_OI', 'Put_Chg_OI', 'pe_chg_oi']),
+        ('CE_IV', ['CE_IV', 'Call_IV', 'ce_iv']),
+        ('PE_IV', ['PE_IV', 'Put_IV', 'pe_iv'])
     ]:
         if target not in df.columns:
             for cand in candidates:
@@ -199,78 +170,10 @@ def normalize_option_chain_data(df):
                     df[target] = pd.to_numeric(df[cand], errors='coerce').fillna(0)
                     break
             if target not in df.columns:
-                df[target] = 0
-
-    # 5. Volume & IV Mapping
-    for target, candidates in [
-        ('CE_Volume', ['CE_Volume', 'Call_Volume', 'ce_volume']),
-        ('PE_Volume', ['PE_Volume', 'Put_Volume', 'pe_volume']),
-        ('CE_IV', ['CE_IV', 'Call_IV', 'ce_iv']),
-        ('PE_IV', ['PE_IV', 'Put_IV', 'pe_iv'])
-    ]:
-        if target not in df.columns:
-            for cand in candidates:
-                if cand in df.columns:
-                    df[target] = pd.to_numeric(df[cand], errors='coerce').fillna(10.0)
-                    break
-            if target not in df.columns:
                 df[target] = 10.0 if 'IV' in target else 100000
-
     return df
 
 chain_df = normalize_option_chain_data(chain_df)
-
-# Math Helpers
-def norm_cdf(x):
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-
-def norm_pdf(x):
-    return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
-
-# Advanced Quant Engine for Greeks & GEX
-def calculate_advanced_metrics(df, spot, lot):
-    r = 0.06 
-    T = 2 / 365.0
-    ce_deltas, pe_deltas, gammas, vegas, ce_gexs, pe_gexs = [], [], [], [], [], []
-    
-    for _, row in df.iterrows():
-        K = row['Strike']
-        call_oi = row.get('Raw_CE_OI', 100000)
-        put_oi = row.get('Raw_PE_OI', 100000)
-        c_iv = max(5.0, row.get('CE_IV', 13.0)) / 100.0
-        p_iv = max(5.0, row.get('PE_IV', 13.5)) / 100.0
-        sigma = (c_iv + p_iv) / 2.0
-        
-        try:
-            d1 = (math.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
-            c_delta = round(norm_cdf(d1), 2)
-            p_delta = round(c_delta - 1.0, 2)
-            gamma = round(norm_pdf(d1) / (spot * sigma * math.sqrt(T)), 5)
-            vega = round((spot * math.sqrt(T) * norm_pdf(d1)) / 100.0, 2)
-        except Exception:
-            c_delta, p_delta, gamma, vega = 0.5, -0.5, 0.001, 10.0
-
-        ce_gex = round(call_oi * lot * (spot ** 2) * gamma / 100000000.0, 2)
-        pe_gex = round(put_oi * lot * (spot ** 2) * gamma / 100000000.0, 2)
-
-        ce_deltas.append(c_delta)
-        pe_deltas.append(p_delta)
-        gammas.append(gamma)
-        vegas.append(vega)
-        ce_gexs.append(ce_gex)
-        pe_gexs.append(pe_gex)
-        
-    df['CE Delta'] = ce_deltas
-    df['PE Delta'] = pe_deltas
-    df['CE Gamma'] = gammas
-    df['PE Gamma'] = gammas
-    df['CE Vega'] = vegas
-    df['PE Vega'] = vegas
-    df['CE GEX (Cr)'] = ce_gexs
-    df['PE GEX (Cr)'] = pe_gexs
-    return df
-
-chain_df = calculate_advanced_metrics(chain_df, live_spot, lot_size)
 
 # ==========================================
 # PAGE 1: CORE OPTION CHAIN & PRICE ACTION
@@ -303,21 +206,7 @@ if "Page 1" in active_page:
     disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', 100000) / 1000000, 2)
     disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', 100000) / 1000000, 2)
 
-    disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', 0)
-    disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', 0)
-
-    if show_greeks:
-        matrix_cols = ["CE GEX (Cr)", "CE Vega", "CE Gamma", "CE Delta", "CE Vol (M)", "CE OI Chg", "CE OI (L)", "CE_LTP"]
-    else:
-        matrix_cols = ["CE Vol (M)", "CE OI Chg", "CE OI (L)", "CE_LTP"]
-
-    matrix_cols += ["STRIKE"]
-
-    if show_greeks:
-        matrix_cols += ["PE_LTP", "PE OI (L)", "PE OI Chg", "PE Vol (M)", "PE Delta", "PE Gamma", "PE Vega", "PE GEX (Cr)"]
-    else:
-        matrix_cols += ["PE_LTP", "PE OI (L)", "PE OI Chg", "PE Vol (M)"]
-
+    matrix_cols = ["CE Vol (M)", "CE_Chg_OI", "CE OI (L)", "CE_LTP", "STRIKE", "PE_LTP", "PE OI (L)", "PE_Chg_OI", "PE Vol (M)"]
     final_cols = [c for c in matrix_cols if c in disp_df.columns]
     matrix_df = disp_df[final_cols].copy()
     
@@ -338,16 +227,17 @@ if "Page 1" in active_page:
 
 
 # ========================================================
-# PAGE 2: OI SUPPORT, RESISTANCE & SHIFT TRACKER DASHBOARD
+# PAGE 2: SENSIBULL-STYLE ADVANCED GRAPH DASHBOARD
 # ========================================================
 elif "Page 2" in active_page:
-    st.markdown("### 🎯 Page 2: OI Support, Resistance & Shift Tracker Dashboard")
+    st.markdown("### 🎯 Page 2: Sensibull-Style Advanced OI & Analytics Graphs")
     st.markdown("---")
     
     total_call_oi = chain_df['Raw_CE_OI'].sum()
     total_put_oi = chain_df['Raw_PE_OI'].sum()
     pcr = round(total_put_oi / total_call_oi, 3) if total_call_oi > 0 else 0
     
+    # Max Pain Calculation
     pain_dict = {}
     strikes = chain_df['Strike'].values
     for strike in strikes:
@@ -362,15 +252,7 @@ elif "Page 2" in active_page:
     immediate_resistance = int(max_call_row['Strike']) if max_call_row is not None else 0
     immediate_support = int(max_put_row['Strike']) if max_put_row is not None else 0
 
-    top_3_calls = chain_df['Raw_CE_OI'].nlargest(3).sum()
-    top_3_puts = chain_df['Raw_PE_OI'].nlargest(3).sum()
-    call_concentration = round((top_3_calls / total_call_oi) * 100, 2) if total_call_oi > 0 else 0
-    put_concentration = round((top_3_puts / total_put_oi) * 100, 2) if total_put_oi > 0 else 0
-
-    atm_idx = (np.abs(chain_df['Strike'] - live_spot)).argmin()
-    atm_strike = chain_df.loc[atm_idx, 'Strike']
-    atm_straddle_price = round(chain_df.loc[atm_idx, 'CE_LTP'] + chain_df.loc[atm_idx, 'PE_LTP'], 2)
-
+    # Top Macro KPI Cards
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.metric("Live PCR", pcr, delta="Bullish" if pcr > 1.1 else "Bearish")
     with m2: st.metric("Max Pain Strike", f"{max_pain_strike:,}")
@@ -379,26 +261,71 @@ elif "Page 2" in active_page:
     
     st.markdown("---")
     
-    a1, a2, a3 = st.columns(3)
-    with a1: st.metric("ATM Straddle Price", f"₹{atm_straddle_price:,.2f}", delta=f"Strike: {atm_strike}")
-    with a2: st.metric("Top 3 Call OI Concentration", f"{call_concentration}%")
-    with a3: st.metric("Top 3 Put OI Concentration", f"{put_concentration}%")
-    
-    st.markdown("---")
-    st.markdown("#### 📊 Top Resistance & Support Striking Walls (OI Bar Summary)")
-    
-    col_s1, col_s2 = st.columns(2)
-    with col_s1:
-        st.markdown("**🔴 Top 5 Resistance Walls (Call OI)**")
-        top_calls = chain_df.nlargest(5, 'Raw_CE_OI')[['Strike', 'Raw_CE_OI', 'CE_Chg_OI', 'CE_LTP']].copy()
-        top_calls['CE OI (Lacs)'] = round(top_calls['Raw_CE_OI'] / 100000, 2)
-        st.dataframe(top_calls[['Strike', 'CE OI (Lacs)', 'CE_Chg_OI', 'CE_LTP']], use_container_width=True, hide_index=True)
-        
-    with col_s2:
-        st.markdown("**🟢 Top 5 Support Floors (Put OI)**")
-        top_puts = chain_df.nlargest(5, 'Raw_PE_OI')[['Strike', 'Raw_PE_OI', 'PE_Chg_OI', 'PE_LTP']].copy()
-        top_puts['PE OI (Lacs)'] = round(top_puts['Raw_PE_OI'] / 100000, 2)
-        st.dataframe(top_puts[['Strike', 'PE OI (Lacs)', 'PE_Chg_OI', 'PE_LTP']], use_container_width=True, hide_index=True)
+    # Filter nearby strikes for crisp plotting (±15 strikes around spot)
+    chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
+    center_idx = chain_df['Dist'].idxmin()
+    plot_df = chain_df.iloc[max(0, center_idx-15):min(len(chain_df), center_idx+16)].copy()
+
+    # --- CHART 1: Sensibull-Style Open Interest Distribution Bar Chart ---
+    st.markdown("#### 📊 1. Strike-wise Open Interest (OI) Distribution Chart")
+    fig_oi = go.Figure()
+    fig_oi.add_trace(go.Bar(
+        x=plot_df['Strike'], y=plot_df['Raw_CE_OI'] / 100000,
+        name='Call OI (Resistance)', marker_color='#ef4444'
+    ))
+    fig_oi.add_trace(go.Bar(
+        x=plot_df['Strike'], y=plot_df['Raw_PE_OI'] / 100000,
+        name='Put OI (Support)', marker_color='#22c55e'
+    ))
+    fig_oi.add_vline(x=live_spot, line_dash="dash", line_color="#fbbf24", annotation_text=f"Spot: {live_spot:.1f}")
+    fig_oi.update_layout(
+        barmode='group', template='plotly_dark',
+        xaxis_title="Strike Price", yaxis_title="Open Interest (in Lakhs)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=450
+    )
+    st.plotly_chart(fig_oi, use_container_width=True)
 
     st.markdown("---")
-    st.markdown("> ⚡ **Shift Monitor Alert:** Immediate Support and Resistance zones remain stable around current option open interest clusters. Watch for sudden OI unwinding to spot breakout points.")
+
+    # --- CHART 2: Intraday Change in OI (Buildup Analysis) ---
+    st.markdown("#### ⚡ 2. Intraday Change in OI ($\Delta OI$) Buildup Chart")
+    fig_chg = go.Figure()
+    fig_chg.add_trace(go.Bar(
+        x=plot_df['Strike'], y=plot_df['CE_Chg_OI'],
+        name='Call Chg in OI', marker_color='#f87171'
+    ))
+    fig_chg.add_trace(go.Bar(
+        x=plot_df['Strike'], y=plot_df['PE_Chg_OI'],
+        name='Put Chg in OI', marker_color='#4ade80'
+    ))
+    fig_chg.add_vline(x=live_spot, line_dash="dash", line_color="#fbbf24")
+    fig_chg.update_layout(
+        barmode='relative', template='plotly_dark',
+        xaxis_title="Strike Price", yaxis_title="Change in OI",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=400
+    )
+    st.plotly_chart(fig_chg, use_container_width=True)
+
+    st.markdown("---")
+
+    # --- CHART 3: Implied Volatility (IV) Smile / Skew Chart ---
+    st.markdown("#### 📉 3. Implied Volatility (IV) Smile & Skew Curve")
+    fig_iv = go.Figure()
+    fig_iv.add_trace(go.Scatter(
+        x=plot_df['Strike'], y=plot_df['CE_IV'],
+        mode='lines+markers', name='Call IV', line=dict(color='#ef4444', width=2)
+    ))
+    fig_iv.add_trace(go.Scatter(
+        x=plot_df['Strike'], y=plot_df['PE_IV'],
+        mode='lines+markers', name='Put IV', line=dict(color='#22c55e', width=2)
+    ))
+    fig_iv.add_vline(x=live_spot, line_dash="dash", line_color="#fbbf24")
+    fig_iv.update_layout(
+        template='plotly_dark',
+        xaxis_title="Strike Price", yaxis_title="Implied Volatility (%)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=400
+    )
+    st.plotly_chart(fig_iv, use_container_width=True)
