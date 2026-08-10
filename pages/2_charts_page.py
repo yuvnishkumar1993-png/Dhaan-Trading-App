@@ -349,7 +349,6 @@ f_ce_oi = disp_df['Raw_CE_OI'].sum()
 f_pe_oi = disp_df['Raw_PE_OI'].sum()
 pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
 
-# Max Pain calculation for full chain
 def calculate_max_pain(df, spot):
     strikes = df['Strike'].values
     ce_oi = df['Raw_CE_OI'].values
@@ -505,4 +504,4 @@ with t1:
     if HAS_PLOTLY:
         fig = go.Figure()
         fig.add_trace(go.Bar(x=chain_df['Strike'], y=chain_df['Raw_CE_OI'], name='CE OI (Resistance)', marker_color='#FF5252'))
-        fig.add_tr
+        fig.add_trace(go.Bar(x=chain_df['Strike'], y=cha
