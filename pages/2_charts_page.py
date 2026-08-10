@@ -49,11 +49,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### ⚡ Fixed & Locked Quant Terminal (Pro)")
+st.markdown("### ⚡ Institutional Quant Terminal (Live History Pro)")
 st.markdown("---")
 
 if "client_id" not in st.session_state: st.session_state.client_id = ""
 if "access_token" not in st.session_state: st.session_state.access_token = ""
+if "intraday_history" not in st.session_state: st.session_state.intraday_history = []
 
 client_id = st.session_state.client_id
 access_token = st.session_state.access_token
@@ -126,18 +127,16 @@ except Exception as e:
     chain_df, live_spot = pd.DataFrame(), 0.0
 
 if chain_df is None or chain_df.empty or live_spot <= 0:
-    st.warning(f"⚠️ **{selected_symbol}** के लिए लाइव ऑप्शन चेन डेटा प्राप्त नहीं हुआ। कृपया जाँच करें कि API टोकन सही हैं या बाजार चालू है।")
+    st.warning(f"⚠️ **{selected_symbol}** के लिए लाइव ऑप्शन चेन डेटा प्राप्त नहीं हुआ।")
     st.stop()
 
 # --- BULLETPROOF COLUMN MAPPING & STRIKE SORTING ---
 strike_col = next((c for c in chain_df.columns if 'STRIKE' in str(c).upper() or 'STRIKE' == str(c).upper()), None)
-if not strike_col:
-    strike_col = chain_df.columns[0]
+if not strike_col: strike_col = chain_df.columns[0]
 
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
 
-# Safe column mapping for OI, Volume, IV, Chg_OI
 for col in chain_df.columns:
     uc = str(col).upper()
     if 'CE' in uc and ('OI' in uc) and 'CHG' not in uc: chain_df['Raw_CE_OI'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(0)
@@ -162,7 +161,6 @@ if 'CE_IV' not in chain_df.columns: chain_df['CE_IV'] = 13.0
 if 'PE_IV' not in chain_df.columns: chain_df['PE_IV'] = 13.5
 if 'CE_Chg_OI' not in chain_df.columns: chain_df['CE_Chg_OI'] = 0
 
-# ALWAYS SORT ASCENDING BY STRIKE
 chain_df = chain_df.sort_values('Strike', ascending=True).reset_index(drop=True)
 
 def norm_cdf(x): return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
@@ -199,7 +197,6 @@ def calculate_advanced_metrics(df, spot, lot):
 
 chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
-# Strike filtering while preserving ascending order
 chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
 if "±5" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-5):min(len(chain_df), idx+6)].copy()
 elif "±10" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-10):min(len(chain_df), idx+11)].copy()
@@ -224,6 +221,20 @@ def calculate_max_pain(df, spot):
     return int(max_pain_strike)
 
 max_pain_val = calculate_max_pain(chain_df, live_spot)
+
+# --- REAL INTRADAY HISTORY LOGGER (SESSION STATE) ---
+current_time_str = datetime.now().strftime("%H:%M")
+# Avoid duplicate entries for the exact same minute
+if not st.session_state.intraday_history or st.session_state.intraday_history[-1]['time'] != current_time_str:
+    st.session_state.intraday_history.append({
+        "time": current_time_str,
+        "spot": live_spot,
+        "oi_pcr": oi_pcr_val,
+        "vol_pcr": vol_pcr_val
+    })
+    # Keep last 50 snapshots
+    if len(st.session_state.intraday_history) > 50:
+        st.session_state.intraday_history.pop(0)
 
 # Top Metrics Card Bar
 st.markdown("---")
@@ -327,16 +338,26 @@ st.plotly_chart(fig_g, use_container_width=True)
 st.info(f"💡 **Signal:** Expiry settlement tends to get pulled toward **{max_pain_val}**.")
 st.markdown("---")
 
-# --- MODULE H: PCR Trend (Fixed Layout Conflict) ---
-st.markdown("##### [MOD H] Intraday PCR Trend")
-time_slots = ['09:30', '10:30', '11:30', '12:30', '13:30', '14:30', '15:15']
-fig_h = go.Figure()
-fig_h.add_trace(go.Scatter(x=time_slots, y=[oi_pcr_val]*len(time_slots), mode='lines+markers', name='PCR', line=dict(color='#38bdf8', width=2)))
-pcr_layout = locked_layout.copy()
-pcr_layout['xaxis'] = dict(type='category', tickangle=0)
-fig_h.update_layout(**pcr_layout)
-st.plotly_chart(fig_h, use_container_width=True)
-st.info(f"💡 **Signal:** Current PCR stands at **{oi_pcr_val}**.")
+# --- MODULE H: Real Intraday History Trend (Dual-Axis with Spot & PCR) ---
+st.markdown("##### [MOD H] Real Intraday PCR & Spot History Trend")
+hist_df = pd.DataFrame(st.session_state.intraday_history)
+
+if not hist_df.empty:
+    fig_h = make_subplots(specs=[[{"secondary_y": True}]])
+    fig_h.add_trace(go.Scatter(x=hist_df['time'], y=hist_df['oi_pcr'], name='OI PCR', line=dict(color='#38bdf8', width=2)), secondary_y=False)
+    fig_h.add_trace(go.Scatter(x=hist_df['time'], y=hist_df['vol_pcr'], name='Vol PCR', line=dict(color='#fbbf24', width=2, dash='dot')), secondary_y=False)
+    fig_h.add_trace(go.Scatter(x=hist_df['time'], y=hist_df['spot'], name='Spot Price', line=dict(color='#4ade80', width=2)), secondary_y=True)
+    
+    pcr_layout = locked_layout.copy()
+    pcr_layout['xaxis'] = dict(type='category', tickangle=0)
+    fig_h.update_layout(**pcr_layout)
+    fig_h.update_yaxes(title_text="<b>PCR Value</b>", secondary_y=False)
+    fig_h.update_yaxes(title_text="<b>Spot Price</b>", secondary_y=True)
+    
+    st.plotly_chart(fig_h, use_container_width=True)
+    st.info(f"💡 **Signal:** Tracking live session progression across {len(hist_df)} recorded timeline snapshot(s).")
+else:
+    st.info("⏳ Gathering intraday history snapshots...")
 st.markdown("---")
 
 # --- MODULE I: Delta Flow ---
