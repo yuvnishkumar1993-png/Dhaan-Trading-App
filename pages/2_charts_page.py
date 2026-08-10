@@ -216,7 +216,7 @@ def render_institutional_terminal():
     resistance_strike = int(chain_df.loc[chain_df['Raw_CE_OI'].idxmax()]['Strike']) if not chain_df.empty else live_spot
     support_strike = int(chain_df.loc[chain_df['Raw_PE_OI'].idxmax()]['Strike']) if not chain_df.empty else live_spot
 
-    # Call utility function for advanced metrics (यहीं से सारे ग्रीक्स जुड़ेंगे)
+    # Call utility function for advanced metrics
     chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
     # Strike Filtering for Display
@@ -328,45 +328,62 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-    # --- 4. VISUAL OI BUILD-UP CHART (Plotly) ---
+    # --- 4. MULTI-TAB INSTITUTIONAL ANALYTICS & CHARTS ---
     if HAS_PLOTLY:
-        st.markdown("### 📈 Open Interest (OI) Distribution Chart")
-        # ATM के आस-पास के 15 स्ट्राइक्स का डायनामिक चार्ट
-        c_idx_full = chain_df['Dist'].idxmin() if not chain_df.empty else 0
-        chart_df = chain_df.iloc[max(0, c_idx_full-7):min(len(chain_df), c_idx_full+8)].copy()
+        st.markdown("---")
+        st.markdown("### 📈 Institutional Analytics & Visualizers")
         
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Raw_CE_OI'], name='Call OI (Resistance)', marker_color='#ef4444'))
-        fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Raw_PE_OI'], name='Put OI (Support)', marker_color='#22c55e'))
-        fig.update_layout(
-            barmode='group',
-            plot_bgcolor='#0e1117',
-            paper_bgcolor='#0e1117',
-            font=dict(color='#f8fafc'),
-            xaxis_title="Strike Price",
-            yaxis_title="Open Interest",
-            legend=dict(x=0, y=1.1, orientation="h")
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        if 'STRIKE' not in disp_df.columns and 'Strike' in disp_df.columns:
+            disp_df['STRIKE'] = disp_df['Strike']
+
+        tab1, tab2, tab3 = st.tabs(["📊 OI Distribution", "⚡ Gamma Exposure (GEX)", "💰 Turnover Profile"])
+
+        with tab1:
+            st.markdown("#### Open Interest (OI) Distribution")
+            chart_df = disp_df.copy()
+            fig_oi = go.Figure()
+            fig_oi.add_trace(go.Bar(x=chart_df['STRIKE'], y=chart_df['Raw_CE_OI'], name='Call OI (Resistance)', marker_color='#ef4444'))
+            fig_oi.add_trace(go.Bar(x=chart_df['STRIKE'], y=chart_df['Raw_PE_OI'], name='Put OI (Support)', marker_color='#22c55e'))
+            fig_oi.update_layout(
+                barmode='group',
+                plot_bgcolor='#0e1117',
+                paper_bgcolor='#0e1117',
+                font=dict(color='#f8fafc'),
+                xaxis_title="Strike Price",
+                yaxis_title="Open Interest",
+                legend=dict(x=0, y=1.1, orientation="h")
+            )
+            st.plotly_chart(fig_oi, use_container_width=True)
+
+        with tab2:
+            st.markdown("#### Gamma Exposure (GEX - Market Magnet Zones)")
+            fig_gex = go.Figure()
+            fig_gex.add_trace(go.Scatter(x=disp_df['STRIKE'], y=disp_df.get('CE GEX (Cr)', 0), name='CE GEX (Cr)', line=dict(color='#ef4444', width=2), mode='lines+markers'))
+            fig_gex.add_trace(go.Scatter(x=disp_df['STRIKE'], y=disp_df.get('PE GEX (Cr)', 0), name='PE GEX (Cr)', line=dict(color='#22c55e', width=2), mode='lines+markers'))
+            fig_gex.update_layout(
+                plot_bgcolor='#0e1117',
+                paper_bgcolor='#0e1117',
+                font=dict(color='#f8fafc'),
+                xaxis_title="Strike Price",
+                yaxis_title="Gamma Exposure (₹ Cr)",
+                legend=dict(x=0, y=1.1, orientation="h")
+            )
+            st.plotly_chart(fig_gex, use_container_width=True)
+
+        with tab3:
+            st.markdown("#### Liquidity & Volume Turnover Profile")
+            fig_turn = go.Figure()
+            fig_turn.add_trace(go.Bar(x=disp_df['STRIKE'], y=disp_df.get('CE Turnover (Cr)', 0), name='CE Turnover', marker_color='#f97316'))
+            fig_turn.add_trace(go.Bar(x=disp_df['STRIKE'], y=disp_df.get('PE Turnover (Cr)', 0), name='PE Turnover', marker_color='#3b82f6'))
+            fig_turn.update_layout(
+                barmode='group',
+                plot_bgcolor='#0e1117',
+                paper_bgcolor='#0e1117',
+                font=dict(color='#f8fafc'),
+                xaxis_title="Strike Price",
+                yaxis_title="Turnover (₹ Cr)",
+                legend=dict(x=0, y=1.1, orientation="h")
+            )
+            st.plotly_chart(fig_turn, use_container_width=True)
 
 render_institutional_terminal()
-# चार्ट्स को अलग-अलग टैब्स में दिखाएं
-tab1, tab2, tab3 = st.tabs(["📊 OI Distribution", "⚡ Gamma Exposure (GEX)", "💰 Turnover Profile"])
-
-with tab1:
-    # आपका मौजूदा OI चार्ट यहाँ आएगा
-    pass
-
-with tab2:
-    st.subheader("Gamma Exposure (Institutional Magnet)")
-    fig_gex = go.Figure()
-    fig_gex.add_trace(go.Scatter(x=disp_df['STRIKE'], y=disp_df['CE GEX (Cr)'], name='CE GEX', line=dict(color='red')))
-    fig_gex.add_trace(go.Scatter(x=disp_df['STRIKE'], y=disp_df['PE GEX (Cr)'], name='PE GEX', line=dict(color='green')))
-    st.plotly_chart(fig_gex, use_container_width=True)
-
-with tab3:
-    st.subheader("Volume Turnover (Liquidity Map)")
-    fig_turn = go.Figure()
-    fig_turn.add_trace(go.Bar(x=disp_df['STRIKE'], y=disp_df['CE Turnover (Cr)'], name='CE Turnover', marker_color='orange'))
-    st.plotly_chart(fig_turn, use_container_width=True)
-
