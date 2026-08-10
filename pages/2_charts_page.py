@@ -13,7 +13,7 @@ try:
 except ImportError:
     HAS_PLOTLY = False
 
-# Page Configuration for Mobile & Desktop Responsive View
+# Page Configuration
 st.set_page_config(
     page_title="Institutional Quant Terminal Pro",
     page_icon="⚡",
@@ -46,7 +46,7 @@ except ImportError:
         def fetch_live_option_chain(c, a, s, seg, exp, sym):
             return None, 0.0
 
-# Mobile-Friendly CSS Styling
+# Sensibull & Professional Dark Theme Styling
 st.markdown("""
 <style>
     .main { background-color: #0b0e14; color: #f8fafc; }
@@ -61,10 +61,9 @@ st.markdown("""
         z-index: 999 !important;
         border-bottom: 2px solid #334155 !important;
     }
-    /* Mobile Card Box Styling */
-    .mobile-card {
+    .card-box {
         background-color: #0f172a;
-        padding: 12px;
+        padding: 15px;
         border-radius: 10px;
         border: 1px solid #1e293b;
         margin-bottom: 15px;
@@ -72,7 +71,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### ⚡ Quant Terminal (Mobile Pro)")
+st.markdown("### ⚡ Sensibull-Style Quant Terminal (Pro)")
 st.markdown("---")
 
 if "client_id" not in st.session_state: st.session_state.client_id = ""
@@ -87,7 +86,6 @@ def get_master_df():
 
 master_df = get_master_df()
 
-# Mobile responsive columns stack automatically on small screens
 col_c1, col_c2 = st.columns(2)
 with col_c1:
     default_symbols = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "RELIANCE"]
@@ -116,8 +114,7 @@ except Exception:
 with col_c2:
     selected_expiry = st.selectbox("📅 Expiry", expiries, key=f"exp_{selected_symbol}")
 
-strike_range_mode = st.selectbox("🎯 Range", ["±5 Strikes", "±10 Strikes", "±20 Strikes", "Full Chain (All)"], index=0, key=f"range_{selected_symbol}")
-show_greeks = st.checkbox("Show Quant Greeks", value=False) # Off by default for clean mobile look
+strike_range_mode = st.selectbox("🎯 Range", ["±5 Strikes", "±10 Strikes", "±20 Strikes", "Full Chain (All)"], index=1, key=f"range_{selected_symbol}")
 
 try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(client_id, access_token, sec_id, seg, selected_expiry, selected_symbol)
@@ -125,16 +122,19 @@ except Exception:
     chain_df, live_spot = pd.DataFrame(), 0.0
 
 if chain_df is None or chain_df.empty:
-    if "BANKNIFTY" in selected_symbol.upper(): live_spot, strikes = 51500.00, np.arange(51000, 52000, 100)
-    elif "SENSEX" in selected_symbol.upper(): live_spot, strikes = 81000.00, np.arange(80500, 81500, 100)
-    else: live_spot, strikes = 24583.80, np.arange(24300, 24800, 50)
+    if "BANKNIFTY" in selected_symbol.upper(): live_spot, strikes = 51500.00, np.arange(50000, 53000, 100)
+    elif "SENSEX" in selected_symbol.upper(): live_spot, strikes = 81000.00, np.arange(79000, 83000, 100)
+    else: live_spot, strikes = 24583.80, np.arange(23500, 25500, 50)
     
     recs = [{"Strike": int(st_val), "STRIKE": int(st_val), "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, live_spot - st_val + 20), "PE_LTP": max(1.0, st_val - live_spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000} for st_val in strikes]
     chain_df = pd.DataFrame(recs)
 
+# --- CRITICAL FIX: CLEAN & SORT STRIKES PROPERLY (ACCENDING ORDER) ---
 strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
+chain_df = chain_df.sort_values('Strike', ascending=True).reset_index(drop=True)
+
 if 'CE_LTP' not in chain_df.columns: chain_df['CE_LTP'] = chain_df.get('Call_LTP', 10.0)
 if 'PE_LTP' not in chain_df.columns: chain_df['PE_LTP'] = chain_df.get('Put_LTP', 10.0)
 if 'Raw_CE_OI' not in chain_df.columns: chain_df['Raw_CE_OI'] = chain_df.get('CE_OI', chain_df.get('Call_OI', 100000))
@@ -172,11 +172,14 @@ def calculate_advanced_metrics(df, spot, lot):
 
 chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
+# Strike filtering for display (ensuring sorting remains intact)
 chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
 if "±5" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-5):min(len(chain_df), idx+6)].copy()
 elif "±10" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-10):min(len(chain_df), idx+11)].copy()
 elif "±20" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-20):min(len(chain_df), idx+21)].copy()
 else: disp_df = chain_df.copy()
+
+disp_df = disp_df.sort_values('Strike', ascending=True).reset_index(drop=True)
 
 f_ce_oi, f_pe_oi = disp_df['Raw_CE_OI'].sum(), disp_df['Raw_PE_OI'].sum()
 oi_pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
@@ -195,7 +198,7 @@ def calculate_max_pain(df, spot):
 
 max_pain_val = calculate_max_pain(chain_df, live_spot)
 
-# Compact Mobile-Friendly Metric Cards
+# Top Metrics Card Bar
 st.markdown("---")
 mc1, mc2, mc3 = st.columns(3)
 with mc1: st.metric("Live Spot", f"₹{live_spot:,.1f}")
@@ -203,101 +206,108 @@ with mc2: st.metric("OI PCR", oi_pcr_val)
 with mc3: st.metric("Max Pain", max_pain_val)
 st.markdown("---")
 
-# Mobile-Optimized Plotly Layout (Chote Margins & Fonts ताकी मोबाइल पर कटे नहीं)
-mobile_interactive_layout = dict(
+# Sensibull-Style Clean Mobile Layout Config
+sensibull_layout = dict(
     template="plotly_dark",
     paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(15, 23, 42, 0.6)",
-    font=dict(color="#f8fafc", size=10, family="Inter, sans-serif"),
+    plot_bgcolor="rgba(15, 23, 42, 0.8)",
+    font=dict(color="#f8fafc", size=11, family="Inter, sans-serif"),
     hovermode="x unified",
-    margin=dict(l=10, r=10, t=30, b=10),
-    legend=dict(orientation="h", y=1.1, x=0, font=dict(size=9)),
-    height=320  # Compact fixed height ideal for mobile screens
+    margin=dict(l=15, r=15, t=35, b=15),
+    legend=dict(orientation="h", y=1.12, x=0, font=dict(size=10)),
+    height=340
 )
 
-st.markdown(f"### 📱 Vertical Analytics Suite ({selected_symbol})")
+st.markdown(f"### 📊 Professional Option Analytics Suite ({selected_symbol})")
 st.markdown("---")
 
-n_strikes = len(chain_df)
+n_strikes = len(disp_df)
 
-# --- MODULE A: OI Profile ---
-st.markdown("##### [MOD A] Open Interest Profile")
+# --- MODULE A: OI Profile (Clean Sorted Bar Chart with Spot Line) ---
+st.markdown("##### [MOD A] Open Interest Profile (Support & Resistance)")
 fig_a = go.Figure()
-fig_a.add_trace(go.Bar(x=chain_df['Strike'], y=chain_df['Raw_CE_OI'], name='CE OI', marker_color='#ef4444'))
-fig_a.add_trace(go.Bar(x=chain_df['Strike'], y=chain_df['Raw_PE_OI'], name='PE OI', marker_color='#22c55e'))
-fig_a.update_layout(**mobile_interactive_layout, barmode="group")
+fig_a.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['Raw_CE_OI'], name='CE OI (Res)', marker_color='#ef4444'))
+fig_a.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['Raw_PE_OI'], name='PE OI (Sup)', marker_color='#22c55e'))
+fig_a.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8", annotation_text="Spot", annotation_position="top")
+fig_a.update_layout(**sensibull_layout, barmode="group", xaxis=dict(type='category'))
 st.plotly_chart(fig_a, use_container_width=True)
-max_ce = chain_df.loc[chain_df['Raw_CE_OI'].idxmax()]['Strike']
-max_pe = chain_df.loc[chain_df['Raw_PE_OI'].idxmax()]['Strike']
-st.info(f"💡 **Signal:** Res: **{max_ce}** | Sup: **{max_pe}**")
+max_ce = disp_df.loc[disp_df['Raw_CE_OI'].idxmax()]['Strike']
+max_pe = disp_df.loc[disp_df['Raw_PE_OI'].idxmax()]['Strike']
+st.info(f"💡 **Sensibull Signal:** Major Resistance (Highest Call OI): **{max_ce}** | Major Support (Highest Put OI): **{max_pe}**")
 st.markdown("---")
 
 # --- MODULE B: Gamma GEX ---
-st.markdown("##### [MOD B] Gamma Exposure (GEX)")
+st.markdown("##### [MOD B] Net Gamma Exposure (GEX)")
 fig_b = go.Figure()
-fig_b.add_trace(go.Bar(x=chain_df['Strike'], y=chain_df['CE GEX (Cr)'], name='CE GEX', marker_color='#38bdf8'))
-fig_b.add_trace(go.Bar(x=chain_df['Strike'], y=chain_df['PE GEX (Cr)'], name='PE GEX', marker_color='#c084fc'))
-fig_b.update_layout(**mobile_interactive_layout, barmode="group")
+fig_b.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['CE GEX (Cr)'], name='CE GEX', marker_color='#38bdf8'))
+fig_b.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['PE GEX (Cr)'], name='PE GEX', marker_color='#c084fc'))
+fig_b.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
+fig_b.update_layout(**sensibull_layout, barmode="group", xaxis=dict(type='category'))
 st.plotly_chart(fig_b, use_container_width=True)
-st.info("💡 **Signal:** High GEX suppresses breakout momentum.")
+st.info("💡 **Signal:** High GEX peaks act as institutional pin zones, keeping market range-bound.")
 st.markdown("---")
 
 # --- MODULE C: IV Smile ---
-st.markdown("##### [MOD C] Implied Volatility (IV) Smile")
-ce_iv = chain_df.get('CE_IV', [13.0]*n_strikes)
-pe_iv = chain_df.get('PE_IV', [13.5]*n_strikes)
+st.markdown("##### [MOD C] Implied Volatility (IV) Smile Curve")
+ce_iv = disp_df.get('CE_IV', [13.0]*n_strikes)
+pe_iv = disp_df.get('PE_IV', [13.5]*n_strikes)
 fig_c = go.Figure()
-fig_c.add_trace(go.Scatter(x=chain_df['Strike'], y=ce_iv, mode='lines+markers', name='CE IV', line=dict(color='#ef4444', width=2)))
-fig_c.add_trace(go.Scatter(x=chain_df['Strike'], y=pe_iv, mode='lines+markers', name='PE IV', line=dict(color='#22c55e', width=2)))
-fig_c.update_layout(**mobile_interactive_layout)
+fig_c.add_trace(go.Scatter(x=disp_df['Strike'], y=ce_iv, mode='lines+markers', name='CE IV', line=dict(color='#ef4444', width=2)))
+fig_c.add_trace(go.Scatter(x=disp_df['Strike'], y=pe_iv, mode='lines+markers', name='PE IV', line=dict(color='#22c55e', width=2)))
+fig_c.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
+fig_c.update_layout(**sensibull_layout, xaxis=dict(type='category'))
 st.plotly_chart(fig_c, use_container_width=True)
-st.info("💡 **Signal:** Put skew indicates downside protection.")
+st.info("💡 **Signal:** Steeper Put IV skew shows heavy buying of downside crash protection.")
 st.markdown("---")
 
 # --- MODULE D: Volume ---
-st.markdown("##### [MOD D] Volume Distribution")
-ce_vol = chain_df.get('CE_Volume', [100000]*n_strikes)
-pe_vol = chain_df.get('PE_Volume', [100000]*n_strikes)
+st.markdown("##### [MOD D] Strike-Wise Volume Distribution")
+ce_vol = disp_df.get('CE_Volume', [100000]*n_strikes)
+pe_vol = disp_df.get('PE_Volume', [100000]*n_strikes)
 fig_d = go.Figure()
-fig_d.add_trace(go.Bar(x=chain_df['Strike'], y=ce_vol, name='CE Vol', marker_color='#c084fc'))
-fig_d.add_trace(go.Bar(x=chain_df['Strike'], y=pe_vol, name='PE Vol', marker_color='#fbbf24'))
-fig_d.update_layout(**mobile_interactive_layout, barmode="stack")
+fig_d.add_trace(go.Bar(x=disp_df['Strike'], y=ce_vol, name='CE Vol', marker_color='#c084fc'))
+fig_d.add_trace(go.Bar(x=disp_df['Strike'], y=pe_vol, name='PE Vol', marker_color='#fbbf24'))
+fig_d.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
+fig_d.update_layout(**sensibull_layout, barmode="stack", xaxis=dict(type='category'))
 st.plotly_chart(fig_d, use_container_width=True)
-st.info("💡 **Signal:** Heavy volume shows intraday battle zones.")
+st.info("💡 **Signal:** Heavy volume concentrations represent immediate intraday action nodes.")
 st.markdown("---")
 
 # --- MODULE E: OI Change ---
-st.markdown("##### [MOD E] Change in Open Interest")
-ce_chg = chain_df.get('CE_Chg_OI', [0]*n_strikes)
+st.markdown("##### [MOD E] Strike-Wise Change in Open Interest")
+ce_chg = disp_df.get('CE_Chg_OI', [0]*n_strikes)
 fig_e = go.Figure()
-fig_e.add_trace(go.Bar(x=chain_df['Strike'], y=ce_chg, name='OI Chg', marker_color='#2dd4bf'))
-fig_e.update_layout(**mobile_interactive_layout)
+fig_e.add_trace(go.Bar(x=disp_df['Strike'], y=ce_chg, name='OI Chg', marker_color='#2dd4bf'))
+fig_e.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
+fig_e.update_layout(**sensibull_layout, xaxis=dict(type='category'))
 st.plotly_chart(fig_e, use_container_width=True)
-st.info("💡 **Signal:** Spikes indicate fresh smart money positioning.")
+st.info("💡 **Signal:** Positive OI change spikes indicate fresh smart-money writing.")
 st.markdown("---")
 
 # --- MODULE F: Theta Decay ---
-st.markdown("##### [MOD F] Theta Decay Wave")
-theta = chain_df.get('CE Theta', [-15.0]*n_strikes)
+st.markdown("##### [MOD F] Option Premium Decay (Theta)")
+theta = disp_df.get('CE Theta', [-15.0]*n_strikes)
 fig_f = go.Figure()
-fig_f.add_trace(go.Scatter(x=chain_df['Strike'], y=theta, mode='lines+markers', name='Theta', line=dict(color='#facc15', width=2)))
-fig_f.update_layout(**mobile_interactive_layout)
+fig_f.add_trace(go.Scatter(x=disp_df['Strike'], y=theta, mode='lines+markers', name='Theta', line=dict(color='#facc15', width=2)))
+fig_f.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
+fig_f.update_layout(**sensibull_layout, xaxis=dict(type='category'))
 st.plotly_chart(fig_f, use_container_width=True)
-st.info("💡 **Signal:** Peak negative theta decay hits ATM strikes.")
+st.info("💡 **Signal:** Maximum time decay is concentrated right at the ATM strike.")
 st.markdown("---")
 
 # --- MODULE G: Max Pain ---
-st.markdown(f"##### [MOD G] Max Pain Curve ({max_pain_val})")
-pain_vals = np.sort(chain_df['Raw_CE_OI'].values)[::-1]
+st.markdown(f"##### [MOD G] Max Pain Strike Curve (Current Target: {max_pain_val})")
+pain_vals = np.sort(disp_df['Raw_CE_OI'].values)[::-1]
 fig_g = go.Figure()
-fig_g.add_trace(go.Scatter(x=chain_df['Strike'], y=pain_vals, mode='lines+markers', name='Pain', line=dict(color='#f43f5e', width=2), fill='tozeroy'))
-fig_g.update_layout(**mobile_interactive_layout)
+fig_g.add_trace(go.Scatter(x=disp_df['Strike'], y=pain_vals, mode='lines+markers', name='Pain', line=dict(color='#f43f5e', width=2), fill='tozeroy'))
+fig_g.add_vline(x=max_pain_val, line_dash="dot", line_color="#f43f5e", annotation_text="Max Pain", annotation_position="top")
+fig_g.update_layout(**sensibull_layout, xaxis=dict(type='category'))
 st.plotly_chart(fig_g, use_container_width=True)
-st.info(f"💡 **Signal:** Expiry settlement targeted near **{max_pain_val}**.")
+st.info(f"💡 **Signal:** Expiry settlement tends to get magnetically pulled toward **{max_pain_val}**.")
 st.markdown("---")
 
-# --- MODULE H: Advanced Dual PCR ---
-st.markdown("##### [MOD H] Dual PCR vs Spot Action")
+# --- MODULE H: Dual PCR Trend ---
+st.markdown("##### [MOD H] Dual PCR Trend vs Spot Action")
 time_slots = ['09:30', '10:30', '11:30', '12:30', '13:30', '14:30', '15:15']
 np.random.seed(42)
 sim_spot_trend = np.linspace(live_spot * 0.995, live_spot * 1.005, len(time_slots))
@@ -308,25 +318,26 @@ fig_h = make_subplots(specs=[[{"secondary_y": True}]])
 fig_h.add_trace(go.Scatter(x=time_slots, y=sim_oi_pcr, name='OI PCR', line=dict(color='#38bdf8', width=2)), secondary_y=False)
 fig_h.add_trace(go.Scatter(x=time_slots, y=sim_vol_pcr, name='Vol PCR', line=dict(color='#fbbf24', width=2, dash='dot')), secondary_y=False)
 fig_h.add_trace(go.Scatter(x=time_slots, y=sim_spot_trend, name='Spot', line=dict(color='#4ade80', width=2)), secondary_y=True)
-fig_h.update_layout(**mobile_interactive_layout)
+fig_h.update_layout(**sensibull_layout)
 st.plotly_chart(fig_h, use_container_width=True)
-st.info(f"💡 **Signal:** OI PCR: **{oi_pcr_val}** | Vol PCR: **{vol_pcr_val}**.")
+st.info(f"💡 **Signal:** OI PCR: **{oi_pcr_val}** | Vol PCR: **{vol_pcr_val}**. (Higher volume PCR indicates sudden intraday accumulation).")
 st.markdown("---")
 
 # --- MODULE I: Delta Flow ---
-st.markdown("##### [MOD I] Delta Flow Matrix")
-delta = chain_df.get('CE Delta', [0.5]*n_strikes)
+st.markdown("##### [MOD I] Cumulative Delta Flow Matrix")
+delta = disp_df.get('CE Delta', [0.5]*n_strikes)
 fig_i = go.Figure()
-fig_i.add_trace(go.Scatter(x=chain_df['Strike'], y=delta, mode='lines+markers', name='Delta', line=dict(color='#4ade80', width=2)))
-fig_i.update_layout(**mobile_interactive_layout)
+fig_i.add_trace(go.Scatter(x=disp_df['Strike'], y=delta, mode='lines+markers', name='Delta', line=dict(color='#4ade80', width=2)))
+fig_i.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
+fig_i.update_layout(**sensibull_layout, xaxis=dict(type='category'))
 st.plotly_chart(fig_i, use_container_width=True)
-st.info("💡 **Signal:** ATM slope reflects momentum velocity.")
+st.info("💡 **Signal:** Delta slope shows directional option sensitivity.")
 st.markdown("---")
 
 # --- MODULE J: Vol Surface ---
 st.markdown("##### [MOD J] Volatility Surface 3D")
 surface_z = np.random.rand(n_strikes, 5)
-fig_j = go.Figure(data=[go.Surface(z=surface_z, x=chain_df['Strike'], y=[1, 2, 3, 4, 5], colorscale='Viridis')])
-fig_j.update_layout(**mobile_interactive_layout, scene=dict(xaxis_title='Strikes', yaxis_title='Tenor', zaxis_title='Vol'))
+fig_j = go.Figure(data=[go.Surface(z=surface_z, x=disp_df['Strike'], y=[1, 2, 3, 4, 5], colorscale='Viridis')])
+fig_j.update_layout(**sensibull_layout, scene=dict(xaxis_title='Strikes', yaxis_title='Tenor', zaxis_title='Vol'))
 st.plotly_chart(fig_j, use_container_width=True)
-st.info("💡 **Signal:** 3D surface maps risk across term structures.")
+st.info("💡 **Signal:** 3D surface tracks risk skew across multiple term structures.")
