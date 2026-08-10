@@ -46,7 +46,7 @@ def calculate_advanced_metrics(df, spot, lot):
         p_iv = max(5.0, float(row.get('PE_IV', 13.5))) / 100.0
         sigma = (c_iv + p_iv) / 2.0
         
-        # Default fallback values defined BEFORE try-except to prevent NameError
+        # सुरक्षित डिफॉल्ट वैल्यूज जो NameError को रोकेंगी
         c_delta, p_delta = 0.5, -0.5
         gamma = 0.001
         c_theta, p_theta = -5.0, -5.0
