@@ -30,14 +30,14 @@ except ImportError:
             return [datetime.now().strftime("%Y-%m-%d")]
         @staticmethod
         def fetch_live_option_chain(c, a, s, seg, exp, sym):
-            spot = 24570.65
-            strikes = np.arange(24050, 25100, 50)
+            spot = 24583.80
+            strikes = np.arange(24000, 25200, 50)
             recs = []
             for st_val in strikes:
                 recs.append({
                     "Strike": int(st_val), "STRIKE": int(st_val),
-                    "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 14.0, "CE_LTP": max(1.0, 24570.65 - st_val + 50),
-                    "PE_LTP": max(1.0, st_val - 24570.65 + 50), "PE_IV": 14.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
+                    "CE_OI": 500000, "Raw_CE_OI": 500000, "CE_Chg_OI": 12000, "CE_%Chg": 1.5, "CE_Volume": 1000000, "CE_IV": 13.0, "CE_LTP": max(1.0, spot - st_val + 20),
+                    "PE_LTP": max(1.0, st_val - spot + 20), "PE_IV": 13.5, "PE_Volume": 1000000, "PE_Chg_OI": -5000, "PE_%Chg": -0.8, "PE_OI": 600000, "Raw_PE_OI": 600000
                 })
             return pd.DataFrame(recs), spot
 
@@ -62,8 +62,14 @@ st.markdown("""
 st.markdown("## ⚡ Institutional Quant Terminal Pro")
 st.markdown("---")
 
-client_id = st.session_state.get("client_id", "")
-access_token = st.session_state.get("access_token", "")
+# Session State Check
+if "client_id" not in st.session_state:
+    st.session_state.client_id = ""
+if "access_token" not in st.session_state:
+    st.session_state.access_token = ""
+
+client_id = st.session_state.client_id
+access_token = st.session_state.access_token
 
 col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns([1.5, 1.5, 2, 2, 1.5])
 
@@ -74,7 +80,7 @@ with col_c1:
     st.session_state.global_symbol = selected_symbol
 
 master_dict = {
-    "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 25},
+    "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 65},
     "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 15},
     "FINNIFTY": {"sec_id": 27, "seg": "IDX_I", "lot": 25},
     "SENSEX": {"sec_id": 51, "seg": "BSE_IDX", "lot": 10},
@@ -82,7 +88,7 @@ master_dict = {
     "TCS": {"sec_id": 11536, "seg": "NSE_EQ", "lot": 175},
     "SBIN": {"sec_id": 3045, "seg": "NSE_EQ", "lot": 750}
 }
-cfg = master_dict.get(selected_symbol.upper(), {"sec_id": 13, "seg": "IDX_I", "lot": 25})
+cfg = master_dict.get(selected_symbol.upper(), {"sec_id": 13, "seg": "IDX_I", "lot": 65})
 sec_id, seg, server_lot = cfg["sec_id"], cfg["seg"], cfg["lot"]
 
 try:
@@ -138,20 +144,27 @@ if chain_df is None or chain_df.empty:
     chain_df = pd.DataFrame(recs)
     live_spot = spot_val
 
-# --- DATA SANITIZATION LAYER (कच्चे डेटा को साफ़ और व्यवस्थित करना) ---
+# --- ROBUST COLUMN NORMALIZATION (कॉलम नामों को सुरक्षित रूप से मैप करना) ---
 strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
 
-# सुरक्षित कॉलम मैपिंग
-for prefix in ['CE_', 'PE_']:
-    oi_key = f"{prefix}OI"
-    raw_key = f"Raw_{prefix}OI"
-    if raw_key not in chain_df.columns:
-        if oi_key in chain_df.columns:
-            chain_df[raw_key] = pd.to_numeric(chain_df[oi_key], errors='coerce').fillna(100000)
-        else:
-            chain_df[raw_key] = 100000
+# Call/Put LTP aur OI ke naam match karna
+if 'CE_LTP' not in chain_df.columns and 'Call_LTP' in chain_df.columns:
+    chain_df['CE_LTP'] = chain_df['Call_LTP']
+elif 'CE_LTP' not in chain_df.columns:
+    chain_df['CE_LTP'] = 10.0
+
+if 'PE_LTP' not in chain_df.columns and 'Put_LTP' in chain_df.columns:
+    chain_df['PE_LTP'] = chain_df['Put_LTP']
+elif 'PE_LTP' not in chain_df.columns:
+    chain_df['PE_LTP'] = 10.0
+
+if 'Raw_CE_OI' not in chain_df.columns:
+    chain_df['Raw_CE_OI'] = chain_df.get('CE_OI', chain_df.get('Call_OI', 100000))
+
+if 'Raw_PE_OI' not in chain_df.columns:
+    chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
 
 # Math Helper functions for Normal CDF and PDF
 def norm_cdf(x):
@@ -179,11 +192,11 @@ def calculate_advanced_metrics(df, spot, lot):
         
         c_ltp = row.get('CE_LTP', 10.0)
         p_ltp = row.get('PE_LTP', 10.0)
-        c_vol = row.get('CE_Volume', 100000)
-        p_vol = row.get('PE_Volume', 100000)
+        c_vol = row.get('CE_Volume', row.get('Call_Volume', 100000))
+        p_vol = row.get('PE_Volume', row.get('Put_Volume', 100000))
         
-        c_iv = max(5.0, row.get('CE_IV', 13.0)) / 100.0
-        p_iv = max(5.0, row.get('PE_IV', 13.5)) / 100.0
+        c_iv = max(5.0, row.get('CE_IV', row.get('Call_IV', 13.0))) / 100.0
+        p_iv = max(5.0, row.get('PE_IV', row.get('Put_IV', 13.5))) / 100.0
         sigma = (c_iv + p_iv) / 2.0
         
         try:
@@ -264,7 +277,7 @@ else:
 
 # Summary Metrics Bar
 atm_row = disp_df.loc[disp_df['Dist'].idxmin()]
-atm_iv = round((atm_row.get('CE_IV', 13.0) + atm_row.get('PE_IV', 13.5)) / 2.0, 2)
+atm_iv = round((atm_row.get('CE_IV', atm_row.get('Call_IV', 13.0)) + atm_row.get('PE_IV', atm_row.get('Put_IV', 13.5))) / 2.0, 2)
 
 f_ce_oi = disp_df['Raw_CE_OI'].sum()
 f_pe_oi = disp_df['Raw_PE_OI'].sum()
@@ -285,18 +298,18 @@ def get_buildup(chg_oi, pct_chg):
     elif pct_chg > 0 and chg_oi < 0: return "Short Cover"
     return "Long Build"
 
-disp_df['CE Build'] = disp_df.apply(lambda r: get_buildup(r.get('CE_Chg_OI', 0), r.get('CE_%Chg', 0)), axis=1)
-disp_df['PE Build'] = disp_df.apply(lambda r: get_buildup(r.get('PE_Chg_OI', 0), r.get('PE_%Chg', 0)), axis=1)
+disp_df['CE Build'] = disp_df.apply(lambda r: get_buildup(r.get('CE_Chg_OI', r.get('Call_Chg_OI', 0)), r.get('CE_%Chg', 0)), axis=1)
+disp_df['PE Build'] = disp_df.apply(lambda r: get_buildup(r.get('PE_Chg_OI', r.get('Put_Chg_OI', 0)), r.get('PE_%Chg', 0)), axis=1)
 
 # Format columns for display cleanly
 disp_df['STRIKE'] = disp_df['Strike']
 disp_df['CE OI (L)'] = round(disp_df['Raw_CE_OI'] / 100000, 2)
 disp_df['PE OI (L)'] = round(disp_df['Raw_PE_OI'] / 100000, 2)
-disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', 100000) / 1000000, 2)
-disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', 100000) / 1000000, 2)
+disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', disp_df.get('Call_Volume', 100000)) / 1000000, 2)
+disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', disp_df.get('Put_Volume', 100000)) / 1000000, 2)
 
-disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', 0)
-disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', 0)
+disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', disp_df.get('Call_Chg_OI', 0))
+disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', disp_df.get('Put_Chg_OI', 0))
 disp_df['CE OI Chg %'] = disp_df.get('CE_%Chg', 0.0)
 disp_df['PE OI Chg %'] = disp_df.get('PE_%Chg', 0.0)
 
