@@ -350,3 +350,23 @@ def render_institutional_terminal():
         st.plotly_chart(fig, use_container_width=True)
 
 render_institutional_terminal()
+# चार्ट्स को अलग-अलग टैब्स में दिखाएं
+tab1, tab2, tab3 = st.tabs(["📊 OI Distribution", "⚡ Gamma Exposure (GEX)", "💰 Turnover Profile"])
+
+with tab1:
+    # आपका मौजूदा OI चार्ट यहाँ आएगा
+    pass
+
+with tab2:
+    st.subheader("Gamma Exposure (Institutional Magnet)")
+    fig_gex = go.Figure()
+    fig_gex.add_trace(go.Scatter(x=disp_df['STRIKE'], y=disp_df['CE GEX (Cr)'], name='CE GEX', line=dict(color='red')))
+    fig_gex.add_trace(go.Scatter(x=disp_df['STRIKE'], y=disp_df['PE GEX (Cr)'], name='PE GEX', line=dict(color='green')))
+    st.plotly_chart(fig_gex, use_container_width=True)
+
+with tab3:
+    st.subheader("Volume Turnover (Liquidity Map)")
+    fig_turn = go.Figure()
+    fig_turn.add_trace(go.Bar(x=disp_df['STRIKE'], y=disp_df['CE Turnover (Cr)'], name='CE Turnover', marker_color='orange'))
+    st.plotly_chart(fig_turn, use_container_width=True)
+
