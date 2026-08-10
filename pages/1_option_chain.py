@@ -48,7 +48,7 @@ except ImportError:
                 })
             return pd.DataFrame(recs), spot
 
-# Professional Institutional Styling Injection (Terminal Grade Dark UI & Sticky Headers)
+# Professional Institutional Styling Injection
 st.markdown("""
 <style>
     .main { background-color: #0e1117; color: #f8fafc; }
@@ -69,7 +69,6 @@ st.markdown("""
 st.markdown("## ⚡ Institutional Quant Terminal Pro")
 st.markdown("---")
 
-# Session State Check
 if "client_id" not in st.session_state:
     st.session_state.client_id = ""
 if "access_token" not in st.session_state:
@@ -78,22 +77,25 @@ if "access_token" not in st.session_state:
 client_id = st.session_state.client_id
 access_token = st.session_state.access_token
 
-# --- 1. LOAD MASTER DATA & AUTO-DETECT SECURITY ID, SEGMENT & LOT SIZE ---
+# --- 1. SAFE MASTER DATA & AUTO-DETECT LOT SIZE ---
 @st.cache_data(ttl=3600)
 def get_master_df():
     return InstitutionalDataEngine.load_scrip_master()
 
 master_df = get_master_df()
 
-# Top Interactive Control Panel
 col_c1, col_c2, col_c3, col_c4 = st.columns([2, 2, 2.5, 2])
 
 with col_c1:
-    # लोकप्रिय सिम्बल्स की लिस्ट
     default_symbols = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "RELIANCE", "TCS", "SBIN"]
-    if not master_df.empty and 'SEM_TRADING_SYMBOL' in master_df.columns:
-        # मास्टर से कुछ मुख्य इंडेक्स/स्टॉक्स निकालना
-        available_syms = master_df['SEM_TRADING_SYMBOL'].dropna().unique()
+    symbol_col = None
+    for c in ['SEM_TRADING_SYMBOL', 'TRADING_SYMBOL', 'SYMBOL', 'SEM_CUSTOM_SYMBOL']:
+        if not master_df.empty and c in master_df.columns:
+            symbol_col = c
+            break
+
+    if symbol_col:
+        available_syms = master_df[symbol_col].dropna().unique()
         popular_symbols = [s for s in default_symbols if s in available_syms]
         if not popular_symbols:
             popular_symbols = default_symbols
@@ -104,22 +106,27 @@ with col_c1:
     selected_symbol = st.selectbox("📌 Asset Underlying", popular_symbols, index=current_idx, key="page_asset_sel")
     st.session_state.global_symbol = selected_symbol
 
-# ऑटो-डिटेक्ट पैरामीटर्स (मास्टर डेटा से सीधे)
-sec_id, seg, auto_lot_size = 13, "IDX_I", 25 # Default Fallback for Nifty
+# Safe Auto-Detection without KeyError
+sec_id, seg, auto_lot_size = 13, "IDX_I", 25
 
-if not master_df.empty:
-    # मैचिंग रो ढूँढना
-    match_row = master_df[master_df['SEM_TRADING_SYMBOL'] == selected_symbol]
+if not master_df.empty and symbol_col:
+    match_row = master_df[master_df[symbol_col] == selected_symbol]
     if not match_row.empty:
-        # इंडेक्स या स्टॉक के आधार पर सही रो चुनना
-        idx_row = match_row[match_row['SEM_EXCH_SEGMENT'].isin(['IDX_I', 'BSE_IDX', 'NSE_EQ'])]
-        target_row = idx_row.iloc[0] if not idx_row.empty else match_row.iloc[0]
+        # सेगमेंट कॉलम ढूंढना
+        seg_col = next((c for c in ['SEM_EXCH_SEGMENT', 'EXCH_SEGMENT', 'SEGMENT'] if c in match_row.columns), None)
+        id_col = next((c for c in ['SEM_SMST_SECURITY_ID', 'SECURITY_ID', 'SEM_SECURITY_ID'] if c in match_row.columns), None)
+        lot_col = next((c for c in ['SEM_LOT_UNITS', 'LOT_SIZE', 'LOT_UNITS'] if c in match_row.columns), None)
         
-        sec_id = int(target_row.get('SEM_SMST_SECURITY_ID', target_row.get('SECURITY_ID', 13)))
-        seg = str(target_row.get('SEM_EXCH_SEGMENT', target_row.get('EXCH_SEGMENT', 'IDX_I')))
-        auto_lot_size = int(target_row.get('SEM_LOT_UNITS', target_row.get('LOT_SIZE', 25)))
+        target_row = match_row.iloc[0]
+        if seg_col:
+            idx_row = match_row[match_row[seg_col].isin(['IDX_I', 'BSE_IDX', 'NSE_EQ'])]
+            if not idx_row.empty:
+                target_row = idx_row.iloc[0]
+                
+        sec_id = int(target_row.get(id_col, 13)) if id_col else 13
+        seg = str(target_row.get(seg_col, 'IDX_I')) if seg_col else 'IDX_I'
+        auto_lot_size = int(target_row.get(lot_col, 25)) if lot_col else 25
 else:
-    # हार्डकोडेड सटीक बैकअप यदि मास्टर लोड न हो
     fallback_map = {
         "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 25},
         "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 15},
@@ -203,7 +210,7 @@ def norm_cdf(x):
 def norm_pdf(x):
     return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
-# --- 4. ADVANCED QUANTITATIVE ENGINE (Greeks & GEX) ---
+# --- 4. ADVANCED QUANTITATIVE ENGINE ---
 def calculate_advanced_metrics(df, spot, lot):
     r = 0.06 
     T = 2 / 365.0
@@ -314,7 +321,7 @@ f_pe_oi = disp_df['Raw_PE_OI'].sum()
 pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
 total_net_gex = round(disp_df['CE GEX (Cr)'].sum() + disp_df['PE GEX (Cr)'].sum(), 2)
 
-# --- 5. CLEAN TERMINAL DASHBOARD BAR ---
+# --- 5. DASHBOARD BAR ---
 st.markdown("---")
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 with m1: st.metric("📌 Asset", selected_symbol)
@@ -335,7 +342,6 @@ def get_buildup(chg_oi, pct_chg):
 disp_df['CE Build'] = disp_df.apply(lambda r: get_buildup(r.get('CE_Chg_OI', r.get('Call_Chg_OI', 0)), r.get('CE_%Chg', 0)), axis=1)
 disp_df['PE Build'] = disp_df.apply(lambda r: get_buildup(r.get('PE_Chg_OI', r.get('Put_Chg_OI', 0)), r.get('PE_%Chg', 0)), axis=1)
 
-# Format columns for display cleanly
 disp_df['STRIKE'] = disp_df['Strike']
 disp_df['CE OI (L)'] = round(disp_df['Raw_CE_OI'] / 100000, 2)
 disp_df['PE OI (L)'] = round(disp_df['Raw_PE_OI'] / 100000, 2)
@@ -355,7 +361,7 @@ disp_df['PE Ask'] = round(disp_df['PE_LTP'] * 1.01, 2)
 disp_df['CE Spread %'] = np.where(disp_df['CE_LTP'] > 0, round(((disp_df['CE Ask'] - disp_df['CE Bid']) / disp_df['CE_LTP']) * 100, 2), 0.0)
 disp_df['PE Spread %'] = np.where(disp_df['PE_LTP'] > 0, round(((disp_df['PE Ask'] - disp_df['PE Bid']) / disp_df['PE_LTP']) * 100, 2), 0.0)
 
-# --- 6. MATRIX LAYOUT STRUCTURE ---
+# --- 6. MATRIX LAYOUT ---
 if show_greeks:
     matrix_cols = [
         "CE Build", "CE GEX (Cr)", "CE Charm", "CE Vanna", "CE Vega", "CE Theta", "Gamma", "CE Delta",
@@ -388,7 +394,7 @@ matrix_df = matrix_df.loc[:, ~matrix_df.columns.duplicated()]
 
 atm_strike_val = round(live_spot / 50) * 50
 
-# --- 7. PROFESSIONAL INSTITUTIONAL STYLING & CELL HEATMAPS ---
+# --- 7. STYLING FUNCTION ---
 def professional_terminal_styling(row):
     strike = row['STRIKE']
     styles = [''] * len(row)
@@ -401,14 +407,14 @@ def professional_terminal_styling(row):
             else:
                 styles[i] = 'background-color: #1f2937; color: #f9fafb; font-weight: bold;'
         elif 'CE' in col_name:
-            if strike < live_spot: # CE ITM
+            if strike < live_spot:
                 styles[i] = 'background-color: #111e38; color: #e2e8f0;'
-            else: # CE OTM
+            else:
                 styles[i] = 'background-color: #0f172a; color: #94a3b8;'
         elif 'PE' in col_name:
-            if strike > live_spot: # PE ITM
+            if strike > live_spot:
                 styles[i] = 'background-color: #381116; color: #e2e8f0;'
-            else: # PE OTM
+            else:
                 styles[i] = 'background-color: #1e1114; color: #94a3b8;'
         else:
             styles[i] = ''
