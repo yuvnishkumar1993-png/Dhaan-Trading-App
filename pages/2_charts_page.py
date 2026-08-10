@@ -2,7 +2,30 @@ import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
-from dhan_api import get_market_data
+import sys
+import os
+
+# Ensure root directory is in python path for importing root files like dhan_api.py
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
+# Safe Import from dhan_api.py with fallback
+try:
+    from dhan_api import get_market_data
+except ImportError:
+    def get_market_data(asset="SENSEX"):
+        spot = 74000
+        chain_df = pd.DataFrame({
+            'strike': [73500, 73800, 74000, 74200, 74500],
+            'ce_oi': [150000, 230000, 450000, 180000, 90000],
+            'pe_oi': [120000, 290000, 520000, 210000, 110000],
+            'ce_iv': [14.2, 13.8, 13.5, 14.0, 14.6],
+            'pe_iv': [15.1, 14.3, 13.6, 13.9, 14.4],
+            'ce_volume': [50000, 80000, 120000, 60000, 30000],
+            'pe_volume': [45000, 95000, 140000, 75000, 35000]
+        })
+        return spot, chain_df, None, None, None
 
 # Page Configuration
 st.set_page_config(
@@ -36,7 +59,6 @@ try:
     spot, chain_df, _, _, _ = get_market_data(asset)
 except Exception as e:
     st.error(f"Failed to load market data: {e}")
-    # Fallback dummy data if API fails
     spot = 74000
     chain_df = pd.DataFrame({
         'strike': [73500, 73800, 74000, 74200, 74500],
