@@ -1,6 +1,7 @@
 import math
 import pandas as pd
 import numpy as np
+from datetime import datetime, timedelta
 
 def norm_cdf(x): 
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
@@ -8,11 +9,36 @@ def norm_cdf(x):
 def norm_pdf(x): 
     return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
+def fetch_available_expiries(client_id, access_token, sec_id, seg):
+    """
+    असली Dhan API से एक्सपायरी डेट्स फेच करता है। 
+    यदि API उपलब्ध नहीं है, तो आने वाले गुरुवार (Thursdays) की लिस्ट ऑटोमैटिकली जनरेट कर देता है।
+    """
+    try:
+        from dhan_api import InstitutionalDataEngine
+        expiries = InstitutionalDataEngine.fetch_expiries(client_id, access_token, sec_id, seg)
+        if expiries:
+            return expiries
+    except Exception:
+        pass
+    
+    # फॉलबैक: आगामी 4-5 गुरुवार (Thursdays) की डमी/ऑटोमैटिक एक्सपायरी डेट्स
+    expiries = []
+    today = datetime.now()
+    # अगले गुरुवार का पता लगाना
+    days_ahead = (3 - today.weekday() + 7) % 7  # 3 means Thursday
+    if days_ahead == 0:
+        days_ahead = 7
+    next_thursday = today + timedelta(days=days_ahead)
+    
+    for i in range(4):
+        exp_date = next_thursday + timedelta(weeks=i)
+        expiries.append(exp_date.strftime("%Y-%m-%d"))
+        
+    return expiries
+
 def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symbol):
-    """
-    असली Dhan API से डेटा फेच करता है। यदि API उपलब्ध नहीं है, 
-    तो लाइव स्पॉट प्राइस के आधार पर सटीक डायनेमिक डेटा रिटर्न करता है।
-    """
+    """असली Dhan API या फॉलबैक से ऑप्शन चेन डेटा फेच करता है"""
     try:
         from dhan_api import InstitutionalDataEngine
         df, spot = InstitutionalDataEngine.fetch_live_option_chain(
@@ -23,7 +49,7 @@ def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symb
     except Exception:
         pass
     
-    # फॉलबैक डायनेमिक सिमुलेशन (जब असली API कनेक्ट न हो)
+    # फॉलबैक डायनेमिक सिमुलेशन
     spot = 24583.80
     strikes = np.arange(spot - 1000, spot + 1000, 50)
     recs = []
@@ -43,10 +69,7 @@ def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symb
     return pd.DataFrame(recs), spot
 
 def normalize_columns(df):
-    """कॉलम नामों को सही फॉर्मेट में मैप करता है ताकि कैलकुलेशन में गलती न हो"""
     df.columns = [str(c).strip() for c in df.columns]
-    
-    # Strike mapping
     for col in ['Strike', 'STRIKE', 'strike_price', 'StrikePrice']:
         if col in df.columns:
             df['Strike'] = pd.to_numeric(df[col], errors='coerce')
@@ -57,7 +80,6 @@ def normalize_columns(df):
     df.dropna(subset=['Strike'], inplace=True)
     df['STRIKE'] = df['Strike']
 
-    # OI Mapping
     if 'Raw_CE_OI' not in df.columns:
         for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest']:
             if c in df.columns:
