@@ -23,8 +23,15 @@ try:
 except ImportError:
     class InstitutionalDataEngine:
         @staticmethod
+        @st.cache_data(ttl=3600)
         def load_scrip_master():
-            return pd.DataFrame()
+            try:
+                url = "https://images.dhan.co/api-data/api-scrip-master.csv"
+                df = pd.read_csv(url, low_memory=False)
+                df.columns = [str(col).strip().upper() for col in df.columns]
+                return df
+            except Exception:
+                return pd.DataFrame()
         @staticmethod
         def fetch_expiries(c, a, s, seg):
             return [datetime.now().strftime("%Y-%m-%d")]
@@ -41,7 +48,7 @@ except ImportError:
                 })
             return pd.DataFrame(recs), spot
 
-# Professional Institutional Styling Injection (Terminal Grade UI & Sticky Headers)
+# Professional Institutional Styling Injection (Terminal Grade Dark UI & Sticky Headers)
 st.markdown("""
 <style>
     .main { background-color: #0e1117; color: #f8fafc; }
@@ -55,13 +62,6 @@ st.markdown("""
         font-weight: 600 !important;
         z-index: 999 !important;
         border-bottom: 2px solid #30363d !important;
-    }
-    .metric-card {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        padding: 15px;
-        border-radius: 8px;
-        text-align: center;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -78,27 +78,59 @@ if "access_token" not in st.session_state:
 client_id = st.session_state.client_id
 access_token = st.session_state.access_token
 
-# --- AUTO-DETECT ASSET & LOT SIZE CONFIGURATION ---
+# --- 1. LOAD MASTER DATA & AUTO-DETECT SECURITY ID, SEGMENT & LOT SIZE ---
+@st.cache_data(ttl=3600)
+def get_master_df():
+    return InstitutionalDataEngine.load_scrip_master()
+
+master_df = get_master_df()
+
+# Top Interactive Control Panel
 col_c1, col_c2, col_c3, col_c4 = st.columns([2, 2, 2.5, 2])
 
 with col_c1:
-    all_symbols = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "RELIANCE", "TCS", "SBIN"]
-    current_idx = all_symbols.index(st.session_state.get("global_symbol", "NIFTY")) if st.session_state.get("global_symbol", "NIFTY") in all_symbols else 0
-    selected_symbol = st.selectbox("📌 Asset Underlying", all_symbols, index=current_idx, key="page_asset_sel")
+    # लोकप्रिय सिम्बल्स की लिस्ट
+    default_symbols = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "RELIANCE", "TCS", "SBIN"]
+    if not master_df.empty and 'SEM_TRADING_SYMBOL' in master_df.columns:
+        # मास्टर से कुछ मुख्य इंडेक्स/स्टॉक्स निकालना
+        available_syms = master_df['SEM_TRADING_SYMBOL'].dropna().unique()
+        popular_symbols = [s for s in default_symbols if s in available_syms]
+        if not popular_symbols:
+            popular_symbols = default_symbols
+    else:
+        popular_symbols = default_symbols
+
+    current_idx = popular_symbols.index(st.session_state.get("global_symbol", "NIFTY")) if st.session_state.get("global_symbol", "NIFTY") in popular_symbols else 0
+    selected_symbol = st.selectbox("📌 Asset Underlying", popular_symbols, index=current_idx, key="page_asset_sel")
     st.session_state.global_symbol = selected_symbol
 
-# Precise Auto-Detected Master Config (No manual hardcoded guesswork)
-master_dict = {
-    "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 25},
-    "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 15},
-    "FINNIFTY": {"sec_id": 27, "seg": "IDX_I", "lot": 25},
-    "SENSEX": {"sec_id": 51, "seg": "BSE_IDX", "lot": 10},
-    "RELIANCE": {"sec_id": 2885, "seg": "NSE_EQ", "lot": 250},
-    "TCS": {"sec_id": 11536, "seg": "NSE_EQ", "lot": 175},
-    "SBIN": {"sec_id": 3045, "seg": "NSE_EQ", "lot": 750}
-}
-cfg = master_dict.get(selected_symbol.upper(), {"sec_id": 13, "seg": "IDX_I", "lot": 25})
-sec_id, seg, auto_lot_size = cfg["sec_id"], cfg["seg"], cfg["lot"]
+# ऑटो-डिटेक्ट पैरामीटर्स (मास्टर डेटा से सीधे)
+sec_id, seg, auto_lot_size = 13, "IDX_I", 25 # Default Fallback for Nifty
+
+if not master_df.empty:
+    # मैचिंग रो ढूँढना
+    match_row = master_df[master_df['SEM_TRADING_SYMBOL'] == selected_symbol]
+    if not match_row.empty:
+        # इंडेक्स या स्टॉक के आधार पर सही रो चुनना
+        idx_row = match_row[match_row['SEM_EXCH_SEGMENT'].isin(['IDX_I', 'BSE_IDX', 'NSE_EQ'])]
+        target_row = idx_row.iloc[0] if not idx_row.empty else match_row.iloc[0]
+        
+        sec_id = int(target_row.get('SEM_SMST_SECURITY_ID', target_row.get('SECURITY_ID', 13)))
+        seg = str(target_row.get('SEM_EXCH_SEGMENT', target_row.get('EXCH_SEGMENT', 'IDX_I')))
+        auto_lot_size = int(target_row.get('SEM_LOT_UNITS', target_row.get('LOT_SIZE', 25)))
+else:
+    # हार्डकोडेड सटीक बैकअप यदि मास्टर लोड न हो
+    fallback_map = {
+        "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 25},
+        "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 15},
+        "FINNIFTY": {"sec_id": 27, "seg": "IDX_I", "lot": 25},
+        "SENSEX": {"sec_id": 51, "seg": "BSE_IDX", "lot": 10},
+        "RELIANCE": {"sec_id": 2885, "seg": "NSE_EQ", "lot": 250},
+        "TCS": {"sec_id": 11536, "seg": "NSE_EQ", "lot": 175},
+        "SBIN": {"sec_id": 3045, "seg": "NSE_EQ", "lot": 750}
+    }
+    cfg = fallback_map.get(selected_symbol.upper(), {"sec_id": 13, "seg": "IDX_I", "lot": 25})
+    sec_id, seg, auto_lot_size = cfg["sec_id"], cfg["seg"], cfg["lot"]
 
 try:
     expiries = InstitutionalDataEngine.fetch_expiries(client_id, access_token, sec_id, seg)
@@ -119,9 +151,9 @@ with col_c3:
     )
 
 with col_c4:
-    show_greeks = st.checkbox("Show Advanced Quant Greeks & Vanna/Charm", value=True)
+    show_greeks = st.checkbox("Show Advanced Quant Greeks", value=True)
 
-# --- FETCH LIVE DATA SAFELY ---
+# --- 2. FETCH LIVE OPTION CHAIN DATA ---
 try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
         client_id, access_token, sec_id, seg, selected_expiry, selected_symbol
@@ -143,7 +175,7 @@ if chain_df is None or chain_df.empty:
     chain_df = pd.DataFrame(recs)
     live_spot = spot_val
 
-# --- ROBUST COLUMN NORMALIZATION ---
+# --- 3. ROBUST COLUMN NORMALIZATION ---
 strike_col = 'Strike' if 'Strike' in chain_df.columns else ('STRIKE' if 'STRIKE' in chain_df.columns else chain_df.columns[0])
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
@@ -171,7 +203,7 @@ def norm_cdf(x):
 def norm_pdf(x):
     return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
-# Comprehensive Advanced Metrics Calculation Engine (GEX, Max Pain, Greeks)
+# --- 4. ADVANCED QUANTITATIVE ENGINE (Greeks & GEX) ---
 def calculate_advanced_metrics(df, spot, lot):
     r = 0.06 
     T = 2 / 365.0
@@ -256,7 +288,7 @@ def calculate_advanced_metrics(df, spot, lot):
 
 chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
-# Strike filtering based on user preference
+# Strike filtering
 chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
 if "±5" in strike_range_mode:
     center_idx = chain_df['Dist'].idxmin()
@@ -282,7 +314,7 @@ f_pe_oi = disp_df['Raw_PE_OI'].sum()
 pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
 total_net_gex = round(disp_df['CE GEX (Cr)'].sum() + disp_df['PE GEX (Cr)'].sum(), 2)
 
-# --- ADVANCED METRICS DASHBOARD BAR ---
+# --- 5. CLEAN TERMINAL DASHBOARD BAR ---
 st.markdown("---")
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 with m1: st.metric("📌 Asset", selected_symbol)
@@ -323,7 +355,7 @@ disp_df['PE Ask'] = round(disp_df['PE_LTP'] * 1.01, 2)
 disp_df['CE Spread %'] = np.where(disp_df['CE_LTP'] > 0, round(((disp_df['CE Ask'] - disp_df['CE Bid']) / disp_df['CE_LTP']) * 100, 2), 0.0)
 disp_df['PE Spread %'] = np.where(disp_df['PE_LTP'] > 0, round(((disp_df['PE Ask'] - disp_df['PE Bid']) / disp_df['PE_LTP']) * 100, 2), 0.0)
 
-# --- MATRIX LAYOUT STRUCTURE ---
+# --- 6. MATRIX LAYOUT STRUCTURE ---
 if show_greeks:
     matrix_cols = [
         "CE Build", "CE GEX (Cr)", "CE Charm", "CE Vanna", "CE Vega", "CE Theta", "Gamma", "CE Delta",
@@ -356,7 +388,7 @@ matrix_df = matrix_df.loc[:, ~matrix_df.columns.duplicated()]
 
 atm_strike_val = round(live_spot / 50) * 50
 
-# --- PROFESSIONAL INSTITUTIONAL STYLING FUNCTION WITH VISUAL CELL BARS ---
+# --- 7. PROFESSIONAL INSTITUTIONAL STYLING & CELL HEATMAPS ---
 def professional_terminal_styling(row):
     strike = row['STRIKE']
     styles = [''] * len(row)
@@ -401,6 +433,6 @@ def professional_terminal_styling(row):
 
 styled_df = matrix_df.style.apply(professional_terminal_styling, axis=1)
 
-st.markdown(f"### 📊 Institutional Option Chain Terminal ({strike_range_mode})")
+st.markdown(f"### 📊 Professional Institutional Option Chain Terminal ({strike_range_mode})")
 st.markdown("---")
 st.dataframe(styled_df, use_container_width=True, height=680, hide_index=True)
