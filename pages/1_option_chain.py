@@ -60,7 +60,7 @@ st.markdown("""
 st.markdown("## ⚡ Institutional Quant Terminal Pro")
 st.markdown("---")
 
-# --- 1. PERSISTENT SESSION STATE PROTECTION (लॉगिन बाहर न जाए) ---
+# --- 1. PERSISTENT SESSION STATE PROTECTION ---
 if "client_id" not in st.session_state:
     st.session_state.client_id = ""
 if "access_token" not in st.session_state:
@@ -99,10 +99,9 @@ with col_c1:
     st.session_state.global_symbol = selected_symbol
 
 # Precise Auto-Detection for Security ID, Segment, and Lot Size
-sec_id, seg, auto_lot_size = 13, "IDX_I", 25
+sec_id, seg, auto_lot_size = 13, "IDX_I", 65
 
-
-# Standard Exchange Lot Size Map (Updated as per CSV & SENSEX = 20)
+# --- OFFICIAL EXTREMELY ACCURATE FALLBACK MAP (SENSEX = 20 & CSV Mapped) ---
 fallback_map = {
     "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 65},
     "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 30},
@@ -113,7 +112,7 @@ fallback_map = {
     "SBIN": {"sec_id": 3045, "seg": "NSE_EQ", "lot": 750}
 }
 
-cfg = fallback_map.get(selected_symbol.upper(), {"sec_id": 13, "seg": "IDX_I", "lot": 25})
+cfg = fallback_map.get(selected_symbol.upper(), {"sec_id": 13, "seg": "IDX_I", "lot": 65})
 sec_id, seg, auto_lot_size = cfg["sec_id"], cfg["seg"], cfg["lot"]
 
 if not master_df.empty and symbol_col:
