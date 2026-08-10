@@ -27,6 +27,9 @@ class InstitutionalDataEngine:
     @st.cache_data(ttl=60)
     def fetch_expiries(client_id, access_token, sec_id, seg):
         """Selected underlying के लिए active expiry dates की list लाता है।"""
+        if not client_id or not access_token:
+            return [datetime.now().strftime("%Y-%m-%d")]
+            
         url = "https://api.dhan.co/v2/optionchain/expirylist"
         headers = {
             "access-token": access_token.strip(), 
@@ -47,7 +50,10 @@ class InstitutionalDataEngine:
     @staticmethod
     @st.cache_data(ttl=10)
     def fetch_live_option_chain(client_id, access_token, sec_id, seg, exp, symbol):
-        """Real-time option chain data fetch करता है जिसमें LTP, OI, Volume और Greeks होते हैं।"""
+        """Real-time option chain data fetch करता है। यदि क्रेडेंशियल्स न हों तो खाली डेटा लौटाता है (फर्जी डेटा नहीं)।"""
+        if not client_id or not access_token:
+            return pd.DataFrame(), 0.0
+
         url = "https://api.dhan.co/v2/optionchain"
         headers = {
             "access-token": access_token.strip(), 
@@ -98,30 +104,10 @@ class InstitutionalDataEngine:
                     if not df_out.empty:
                         df_out = df_out.sort_values(by="Strike").reset_index(drop=True)
                     return df_out, spot_val
-        except Exception:
-            pass
+        except Exception as e:
+            st.error(f"API Connection Error: {e}")
             
-        # Fallback Simulation यदि API कनेक्ट न हो
-        np.random.seed(42)
-        strikes = np.arange(24000, 25500, 50) if "NIFTY" in symbol else np.arange(72000, 75000, 100)
-        spot_val = float(strikes[len(strikes)//2] + 25)
-        
-        df_mock = pd.DataFrame({
-            'Strike': strikes,
-            'Call_OI': np.random.randint(10000, 500000, len(strikes)),
-            'Call_Chg_OI': np.random.randint(-50000, 100000, len(strikes)),
-            'Call_Volume': np.random.randint(50000, 1000000, len(strikes)),
-            'Call_IV': np.random.uniform(12.0, 25.0, len(strikes)),
-            'Call_LTP': np.random.uniform(50.0, 500.0, len(strikes)),
-            'Call_Delta': 0.5, 'Call_Gamma': 0.001,
-            'Put_LTP': np.random.uniform(50.0, 500.0, len(strikes)),
-            'Put_IV': np.random.uniform(12.0, 25.0, len(strikes)),
-            'Put_Volume': np.random.randint(50000, 1000000, len(strikes)),
-            'Put_Chg_OI': np.random.randint(-50000, 100000, len(strikes)),
-            'Put_OI': np.random.randint(10000, 500000, len(strikes)),
-            'Put_Delta': -0.5, 'Put_Gamma': 0.001
-        })
-        return df_mock, spot_val
+        return pd.DataFrame(), 0.0
 
 def verify_dhan_credentials(client_id, access_token):
     url = "https://api.dhan.co/v2/holdings"
