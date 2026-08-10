@@ -11,29 +11,35 @@ def norm_pdf(x):
 
 def fetch_available_expiries(client_id, access_token, sec_id, seg):
     """
-    असली Dhan API से एक्सपायरी डेट्स फेच करता है। 
-    यदि API उपलब्ध नहीं है, तो आने वाले गुरुवार (Thursdays) की लिस्ट ऑटोमैटिकली जनरेट कर देता है।
+    असली Dhan API या फॉलबैक से एक्सपायरी डेट्स फेच करता है 
+    और उन्हें हमेशा पास से दूर (सॉर्टेड) व्यवस्थित करता है।
     """
+    expiries = []
     try:
         from dhan_api import InstitutionalDataEngine
-        expiries = InstitutionalDataEngine.fetch_expiries(client_id, access_token, sec_id, seg)
-        if expiries:
-            return expiries
+        api_expiries = InstitutionalDataEngine.fetch_expiries(client_id, access_token, sec_id, seg)
+        if api_expiries:
+            expiries = list(api_expiries)
     except Exception:
         pass
     
-    # फॉलबैक: आगामी 4-5 गुरुवार (Thursdays) की डमी/ऑटोमैटिक एक्सपायरी डेट्स
-    expiries = []
-    today = datetime.now()
-    # अगले गुरुवार का पता लगाना
-    days_ahead = (3 - today.weekday() + 7) % 7  # 3 means Thursday
-    if days_ahead == 0:
-        days_ahead = 7
-    next_thursday = today + timedelta(days=days_ahead)
-    
-    for i in range(4):
-        exp_date = next_thursday + timedelta(weeks=i)
-        expiries.append(exp_date.strftime("%Y-%m-%d"))
+    # यदि API से एक्सपायरी नहीं मिली, तो वर्तमान तारीख से आगामी गुरुवार (Thursdays) जनरेट करें
+    if not expiries:
+        today = datetime.now()
+        days_ahead = (3 - today.weekday() + 7) % 7  # 3 = Thursday
+        if days_ahead == 0:
+            days_ahead = 7
+        next_thursday = today + timedelta(days=days_ahead)
+        
+        for i in range(5):
+            exp_date = next_thursday + timedelta(weeks=i)
+            expiries.append(exp_date.strftime("%Y-%m-%d"))
+            
+    # तारीखों को हमेशा सही क्रम (Ascending Order) में सॉर्ट करना ताकि सबसे पहली एक्सपायरी नियरेस्ट हो
+    try:
+        expiries = sorted(expiries, key=lambda x: datetime.strptime(str(x)[:10], "%Y-%m-%d"))
+    except Exception:
+        pass
         
     return expiries
 
