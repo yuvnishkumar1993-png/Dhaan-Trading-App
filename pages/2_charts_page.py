@@ -48,11 +48,11 @@ except ImportError:
         def fetch_live_option_chain(c, a, s, seg, exp, sym):
             return None, 0.0
 
-# Import modular backend functions from quant_utils
+# Import modular backend functions from utils
 try:
-    from quant_utils import calculate_max_pain, calculate_advanced_metrics, get_buildup
+    from utils import calculate_max_pain, calculate_advanced_metrics, get_buildup
 except ImportError:
-    st.error("❌ `quant_utils.py` could not be imported. Please verify root directory.")
+    st.error("❌ `utils.py` could not be imported. Please verify root directory.")
     st.stop()
 
 # Professional Styling Injection
