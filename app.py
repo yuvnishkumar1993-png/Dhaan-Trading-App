@@ -13,9 +13,13 @@ st.set_page_config(
     layout="wide"
 )
 
-# सेशन स्टेट इनिशियलाइज़ेशन
+# 1. सेशन स्टेट इनिशियलाइज़ेशन (सारे वेरिएबल्स एक जगह सुरक्षित)
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+if "client_id" not in st.session_state:
+    st.session_state.client_id = ""
+if "access_token" not in st.session_state:
+    st.session_state.access_token = ""
 
 # =====================================================================
 # 📌 SIDEBAR LOGIN & AUTHENTICATION
@@ -25,33 +29,42 @@ st.sidebar.title("📊 Dhan Platform")
 if not st.session_state.logged_in:
     st.sidebar.subheader("🔑 Login to Dhan")
     with st.sidebar.form("login_form"):
-        cid = st.text_input("Client ID")
-        token = st.text_input("Access Token", type="password")
+        # सेशन स्टेट से वैल्यूज को इनपुट फील्ड में होल्ड रखना ताकि री-रन पर उड़े नहीं
+        cid = st.text_input("Client ID", value=st.session_state.client_id)
+        token = st.text_input("Access Token", type="password", value=st.session_state.access_token)
         
         submitted = st.form_submit_button("Login")
-        if submitted and cid and token:
-            valid, msg = verify_dhan_credentials(cid, token)
-            if valid:
-                st.session_state.logged_in = True
-                st.session_state.client_id = cid
-                st.session_state.access_token = token
-                st.success("Login Successful!")
-                st.rerun()
+        if submitted:
+            if cid and token:
+                valid, msg = verify_dhan_credentials(cid, token)
+                if valid:
+                    st.session_state.logged_in = True
+                    st.session_state.client_id = cid
+                    st.session_state.access_token = token
+                    st.success("Login Successful!")
+                    st.rerun()
+                else:
+                    st.error(msg)
             else:
-                st.error(msg)
+                st.error("Please enter both Client ID and Access Token.")
 else:
     st.sidebar.success(f"Connected (ID: {st.session_state.client_id})")
     
     # लाइव वेबसॉकेट बैकग्राउंड में शुरू करना
     if "ws_client" not in st.session_state:
-        st.session_state.ws_client = DhanWebSocket(st.session_state.client_id, st.session_state.access_token)
-        st.session_state.ws_client.start()
+        try:
+            st.session_state.ws_client = DhanWebSocket(st.session_state.client_id, st.session_state.access_token)
+            st.session_state.ws_client.start()
+        except Exception as e:
+            st.sidebar.warning(f"WebSocket Warning: {e}")
 
     st.sidebar.markdown("---")
     st.sidebar.info("👉 नीचे दिए गए पेजों पर क्लिक करके नेविगेट करें:")
     
     if st.sidebar.button("Logout", type="secondary"):
         st.session_state.logged_in = False
+        st.session_state.client_id = ""
+        st.session_state.access_token = ""
         if "ws_client" in st.session_state:
             del st.session_state.ws_client
         st.rerun()
@@ -86,29 +99,3 @@ else:
         st.metric(label="Connection Status", value="Connected 🟢")
     with m3:
         st.metric(label="WebSocket Feed", value="Active ⚡")
-import streamlit as st
-
-# सेशन स्टेट में पहले से वैल्यू चेक करें ताकि री-रन होने पर डिलीट न हों
-if "client_id" not in st.session_state:
-    st.session_state["client_id"] = ""
-
-if "access_token" not in st.session_state:
-    st.session_state["access_token"] = ""
-
-if "is_logged_in" not in st.session_state:
-    st.session_state["is_logged_in"] = False
-
-st.sidebar.markdown("## 🔐 Broker Authentication")
-
-# इनपुट फील्ड्स को सेशन स्टेट से जोड़ें
-client_id_input = st.sidebar.text_input("Client ID", value=st.session_state["client_id"])
-access_token_input = st.sidebar.text_input("Access Token", type="password", value=st.session_state["access_token"])
-
-if st.sidebar.button("Login / Save Credentials"):
-    if client_id_input and access_token_input:
-        st.session_state["client_id"] = client_id_input
-        st.session_state["access_token"] = access_token_input
-        st.session_state["is_logged_in"] = True
-        st.sidebar.success("Credentials Saved Successfully!")
-    else:
-        st.sidebar.error("Please enter both Client ID and Access Token.")
