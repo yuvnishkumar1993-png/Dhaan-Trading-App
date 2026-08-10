@@ -103,7 +103,6 @@ with col_h2:
     selected_expiry = st.selectbox("📅 Expiry", expiries, index=0, key=f"exp_{selected_symbol}")
 
 with col_h3:
-    # Navigation between Page 1 and Page 2
     active_page = st.selectbox("📑 Terminal Page", ["Page 1: Core Option Chain", "Page 2: OI Support, Resistance & Shift Tracker"])
 
 with col_h4:
@@ -159,7 +158,7 @@ def norm_cdf(x):
 def norm_pdf(x):
     return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
-# Advanced Quant Engine for Greeks & GEX
+# Advanced Quant Engine for Greeks & GEX (Unique Columns)
 def calculate_advanced_metrics(df, spot, lot):
     r = 0.06 
     T = 2 / 365.0
@@ -194,7 +193,8 @@ def calculate_advanced_metrics(df, spot, lot):
         
     df['CE Delta'] = ce_deltas
     df['PE Delta'] = pe_deltas
-    df['Gamma'] = gammas
+    df['CE Gamma'] = gammas
+    df['PE Gamma'] = gammas
     df['CE Vega'] = vegas
     df['PE Vega'] = vegas
     df['CE GEX (Cr)'] = ce_gexs
@@ -210,7 +210,7 @@ if "Page 1" in active_page:
     st.markdown("### 📊 Page 1: Core Option Chain & Price Action Matrix")
     st.markdown("---")
     
-    col_r1, col_r2, col_r3 = st.columns([2, 2, 2])
+    col_r1, col_r2 = st.columns([2, 2])
     with col_r1:
         strike_range_mode = st.selectbox("🎯 Strike Range", ["±5 Strikes", "±10 Strikes", "±20 Strikes", "Full Chain (All)"], index=1)
     with col_r2:
@@ -239,14 +239,14 @@ if "Page 1" in active_page:
     disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', 0)
 
     if show_greeks:
-        matrix_cols = ["CE GEX (Cr)", "CE Vega", "Gamma", "CE Delta", "CE Vol (M)", "CE OI Chg", "CE OI (L)", "CE_LTP"]
+        matrix_cols = ["CE GEX (Cr)", "CE Vega", "CE Gamma", "CE Delta", "CE Vol (M)", "CE OI Chg", "CE OI (L)", "CE_LTP"]
     else:
         matrix_cols = ["CE Vol (M)", "CE OI Chg", "CE OI (L)", "CE_LTP"]
 
     matrix_cols += ["STRIKE"]
 
     if show_greeks:
-        matrix_cols += ["PE_LTP", "PE OI (L)", "PE OI Chg", "PE Vol (M)", "PE Delta", "Gamma", "PE Vega", "PE GEX (Cr)"]
+        matrix_cols += ["PE_LTP", "PE OI (L)", "PE OI Chg", "PE Vol (M)", "PE Delta", "PE Gamma", "PE Vega", "PE GEX (Cr)"]
     else:
         matrix_cols += ["PE_LTP", "PE OI (L)", "PE OI Chg", "PE Vol (M)"]
 
@@ -276,12 +276,10 @@ elif "Page 2" in active_page:
     st.markdown("### 🎯 Page 2: OI Support, Resistance & Shift Tracker Dashboard")
     st.markdown("---")
     
-    # 1. Macro Calculations
     total_call_oi = chain_df['Raw_CE_OI'].sum()
     total_put_oi = chain_df['Raw_PE_OI'].sum()
     pcr = round(total_put_oi / total_call_oi, 3) if total_call_oi > 0 else 0
     
-    # Max Pain Calculation
     pain_dict = {}
     strikes = chain_df['Strike'].values
     for strike in strikes:
@@ -290,25 +288,21 @@ elif "Page 2" in active_page:
         pain_dict[strike] = (call_pain + put_pain).sum()
     max_pain_strike = min(pain_dict, key=pain_dict.get) if pain_dict else live_spot
 
-    # Immediate Support & Resistance
     max_call_row = chain_df.loc[chain_df['Raw_CE_OI'].idxmax()] if not chain_df.empty else None
     max_put_row = chain_df.loc[chain_df['Raw_PE_OI'].idxmax()] if not chain_df.empty else None
     
     immediate_resistance = int(max_call_row['Strike']) if max_call_row is not None else 0
     immediate_support = int(max_put_row['Strike']) if max_put_row is not None else 0
 
-    # Concentration Index (% of top 3 strikes)
     top_3_calls = chain_df['Raw_CE_OI'].nlargest(3).sum()
     top_3_puts = chain_df['Raw_PE_OI'].nlargest(3).sum()
     call_concentration = round((top_3_calls / total_call_oi) * 100, 2) if total_call_oi > 0 else 0
     put_concentration = round((top_3_puts / total_put_oi) * 100, 2) if total_put_oi > 0 else 0
 
-    # ATM Straddle
     atm_idx = (np.abs(chain_df['Strike'] - live_spot)).argmin()
     atm_strike = chain_df.loc[atm_idx, 'Strike']
     atm_straddle_price = round(chain_df.loc[atm_idx, 'CE_LTP'] + chain_df.loc[atm_idx, 'PE_LTP'], 2)
 
-    # Display Macro Metric Cards
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.metric("Live PCR", pcr, delta="Bullish" if pcr > 1.1 else "Bearish")
     with m2: st.metric("Max Pain Strike", f"{max_pain_strike:,}")
@@ -317,7 +311,6 @@ elif "Page 2" in active_page:
     
     st.markdown("---")
     
-    # Advanced Metrics Row
     a1, a2, a3 = st.columns(3)
     with a1: st.metric("ATM Straddle Price", f"₹{atm_straddle_price:,.2f}", delta=f"Strike: {atm_strike}")
     with a2: st.metric("Top 3 Call OI Concentration", f"{call_concentration}%")
@@ -326,9 +319,7 @@ elif "Page 2" in active_page:
     st.markdown("---")
     st.markdown("#### 📊 Top Resistance & Support Striking Walls (OI Bar Summary)")
     
-    # Resistance and Support Striking Tables
     col_s1, col_s2 = st.columns(2)
-    
     with col_s1:
         st.markdown("**🔴 Top 5 Resistance Walls (Call OI)**")
         top_calls = chain_df.nlargest(5, 'Raw_CE_OI')[['Strike', 'Raw_CE_OI', 'CE_Chg_OI', 'CE_LTP']].copy()
