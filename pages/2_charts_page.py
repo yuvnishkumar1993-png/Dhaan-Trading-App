@@ -1,133 +1,111 @@
-import os
-import sys
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+import plotly.graph_objects as go
+from utils import (
+    get_option_chain_data,
+    calculate_max_pain,
+    detect_oi_spurt,
+    calculate_strategy_payoff,
+    get_multi_expiry_matrix
+)
 
-try:
-    import plotly.graph_objects as go
-    HAS_PLOTLY = True
-except ImportError:
-    HAS_PLOTLY = False
+st.set_page_config(page_title="Graphics & Advanced Analyzer", layout="wide")
 
-st.set_page_config(page_title="Institutional Quant Terminal Pro", page_icon="⚡", layout="wide")
+st.title("📊 Institutional Graphics & Option Analyzer")
+st.markdown("ऑप्शन चेन, ओपन इंटरेस्ट स्पर्ट, मैक्स पेन और स्ट्रेटजी पेऑफ का एडवांस्ड ग्राफिकल विश्लेषण।")
 
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if ROOT_DIR not in sys.path: sys.path.append(ROOT_DIR)
+# Sidebar Controls
+st.sidebar.header("Analyzer Settings")
+expiries = get_multi_expiry_matrix()
+selected_expiry = st.sidebar.selectbox("Select Expiry", expiries)
 
-try:
-    from dhan_api import InstitutionalDataEngine
-except ImportError:
-    class InstitutionalDataEngine:
-        @staticmethod
-        @st.cache_data(ttl=3600)
-        def load_scrip_master():
-            try:
-                url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-                df = pd.read_csv(url, low_memory=False)
-                df.columns = [str(col).strip().upper() for col in df.columns]
-                return df
-            except Exception: return pd.DataFrame()
-        @staticmethod
-        def fetch_expiries(c, a, s, seg):
-            today = datetime.now()
-            days_to_thu = (3 - today.weekday() + 7) % 7
-            if days_to_thu == 0: days_to_thu = 7
-            next_thu = today + timedelta(days=days_to_thu)
-            return [(next_thu + timedelta(weeks=i)).strftime("%Y-%m-%d") for i in range(4)]
-        @staticmethod
-        def fetch_live_option_chain(c, a, s, seg, exp, sym): return None, 0.0
+# Fetch Data from utils
+with st.spinner("Fetching Live Option Chain Data..."):
+    df_chain = get_option_chain_data()
 
-from utils import calculate_max_pain, calculate_advanced_metrics, get_buildup
+if df_chain is not None and not df_chain.empty:
+    # Core Calculations
+    total_ce_oi = df_chain['CE_OpenInterest'].sum() if 'CE_OpenInterest' in df_chain.columns else 0
+    total_pe_oi = df_chain['PE_OpenInterest'].sum() if 'PE_OpenInterest' in df_chain.columns else 0
+    pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else 1.0
+    max_pain = calculate_max_pain(df_chain)
 
-# Styling
-st.markdown("""
-<style>
-    .main { background-color: #0e1117; color: #f8fafc; }
-    [data-testid="stDataFrame"] { border: 1px solid #30363d; border-radius: 8px; }
-</style>
-""", unsafe_allow_html=True)
+    # Top Metrics Dashboard
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric(label="Total CE OI", value=f"{total_ce_oi:,}")
+    with col2:
+        st.metric(label="Total PE OI", value=f"{total_pe_oi:,}")
+    with col3:
+        st.metric(label="Put-Call Ratio (PCR)", value=pcr, delta="Bullish" if pcr > 1.2 else "Bearish" if pcr < 0.8 else "Neutral")
+    with col4:
+        st.metric(label="Max Pain Strike", value=str(max_pain) if max_pain else "N/A")
 
-st.markdown("## ⚡ Institutional Quant Terminal Pro")
-st.markdown("---")
+    st.markdown("---")
 
-if "client_id" not in st.session_state: st.session_state.client_id = ""
-client_id = st.session_state.client_id
-access_token = st.session_state.access_token
+    # Tabs for Different Advanced Views
+    tab1, tab2, tab3 = st.tabs(["📈 OI & Max Pain Chart", "⚡ OI Spurt / Spikes", "🧮 Strategy Payoff Simulator"])
 
-@st.cache_data(ttl=3600)
-def get_master_df(): return InstitutionalDataEngine.load_scrip_master()
-master_df = get_master_df()
+    with tab1:
+        st.subheader("Strike-wise Open Interest (CE vs PE) with Max Pain")
+        if 'StrikePrice' in df_chain.columns:
+            fig = go.Figure(data=[
+                go.Bar(name='Call OI (CE)', x=df_chain['StrikePrice'], y=df_chain['CE_OpenInterest'], marker_color='#EF553B'),
+                go.Bar(name='Put OI (PE)', x=df_chain['StrikePrice'], y=df_chain['PE_OpenInterest'], marker_color='#00CC96')
+            ])
+            
+            if max_pain:
+                fig.add_vline(x=max_pain, line_dash="dash", line_color="yellow", annotation_text=f"Max Pain: {max_pain}")
 
-# --- CONTROLS ---
-col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns([1.5, 1.8, 1.8, 2, 1.5])
-with col_c1: asset_type = st.selectbox("📊 Segment", ["Indices", "F&O Stocks"])
-with col_c2: 
-    available_symbols = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"]
-    selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols)
-with col_c3: selected_expiry = st.selectbox("📅 Expiry", ["2026-08-11", "2026-08-20"])
-with col_c4: strike_range_mode = st.selectbox("🎯 Range", ["±10 Strikes", "Full Chain"])
-with col_c5: show_greeks = st.checkbox("Show Greeks", True)
+            fig.update_layout(
+                barmode='group',
+                template='plotly_dark',
+                title=f"Open Interest Distribution ({selected_expiry})",
+                xaxis_title="Strike Price",
+                yaxis_title="Open Interest",
+                height=550
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.error("⚠️ StrikePrice column missing in data.")
 
-# --- TERMINAL ENGINE ---
-@st.fragment(run_every=300)
-def render_institutional_terminal():
-    chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(client_id, access_token, 13, "IDX_I", selected_expiry, selected_symbol)
-    
-    if chain_df is None or chain_df.empty:
-        st.warning("⚠️ लाइव ऑप्शन चैन डेटा प्राप्त नहीं हो पा रहा है। कृपया अपने API कनेक्शन की जाँच करें।")
-        return
+    with tab2:
+        st.subheader("🚨 Real-time OI Spurt & Volume Anomalies")
+        spurt_df = detect_oi_spurt(df_chain, threshold=50000)
+        if not spurt_df.empty:
+            st.dataframe(spurt_df, use_container_width=True)
+        else:
+            st.info("ℹ️ वर्तमान में किसी बड़े OI Spurt या अनवाइंडिंग का डिटेक्ट नहीं हुआ है।")
 
-    # सुरक्षित कॉलम मैपिंग (KeyError से बचाने के लिए)
-    strike_col = next((c for c in ['Strike', 'STRIKE', 'strike'] if c in chain_df.columns), chain_df.columns[0])
-    chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
-    chain_df.dropna(subset=['Strike'], inplace=True)
-    chain_df.sort_values(by='Strike', inplace=True)
+    with tab3:
+        st.subheader("📊 Interactive Options Strategy Payoff Calculator")
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            strat_type = st.selectbox("Select Strategy", ["Bull Call Spread", "Long Straddle"])
+            strike_atm = st.number_input("Base Strike Price (ATM)", value=int(max_pain) if max_pain else 24500, step=50)
+            strike_spread = st.number_input("Second Strike / Spread Offset", value=strike_atm + 200, step=50)
+        with col_s2:
+            prem_1 = st.number_input("Premium 1 (Buy/Long)", value=120.0, step=5.0)
+            prem_2 = st.number_input("Premium 2 (Sell/Short)", value=60.0, step=5.0)
 
-    # OI कॉलम मैपिंग सुरक्षित करें
-    ce_oi_col = next((c for c in ['Raw_CE_OI', 'CE_OI', 'Call_OI', 'CE OI'] if c in chain_df.columns), None)
-    pe_oi_col = next((c for c in ['Raw_PE_OI', 'PE_OI', 'Put_OI', 'PE OI'] if c in chain_df.columns), None)
-    
-    chain_df['Raw_CE_OI'] = chain_df[ce_oi_col] if ce_oi_col else 100000
-    chain_df['Raw_PE_OI'] = chain_df[pe_oi_col] if pe_oi_col else 100000
+        spot_min = strike_atm - 500
+        spot_max = strike_atm + 500
+        spot_range = np.linspace(spot_min, spot_max, 100)
 
-    # मेट्रिक्स कैलकुलेट करें
-    chain_df = calculate_advanced_metrics(chain_df, live_spot, 65)
-    
-    # रेंज फिल्टर
-    c_idx = (chain_df['Strike'] - live_spot).abs().idxmin()
-    disp_df = chain_df.iloc[max(0, c_idx-10):min(len(chain_df), c_idx+11)].copy() if "±10" in strike_range_mode else chain_df
+        payoff_df = calculate_strategy_payoff(strat_type, strike_atm, strike_spread, prem_1, prem_2, spot_range)
 
-    # Display Chain DataFrame
-    st.dataframe(disp_df, use_container_width=True)
+        fig_pnl = go.Figure()
+        fig_pnl.add_trace(go.Scatter(x=payoff_df['SpotPrice'], y=payoff_df['PnL'], mode='lines', name='Net PnL', line=dict(color='cyan', width=3)))
+        fig_pnl.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_pnl.update_layout(
+            template='plotly_dark',
+            title=f"Payoff Diagram: {strat_type}",
+            xaxis_title="Spot Price at Expiry",
+            yaxis_title="Profit / Loss (INR)",
+            height=450
+        )
+        st.plotly_chart(fig_pnl, use_container_width=True)
 
-    # --- SENSITIVE INSTITUTIONAL CHARTS ---
-    if HAS_PLOTLY:
-        st.markdown("---")
-        st.markdown("### 📈 Institutional Sensitive Analytics")
-        tab1, tab2, tab3 = st.tabs(["📊 OI Distribution", "⚡ Net GEX (Flip Zone)", "💰 Liquidity Concentration"])
-
-        with tab1:
-            fig_oi = go.Figure()
-            fig_oi.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['Raw_CE_OI'], name='Call OI', marker_color='#ef4444'))
-            fig_oi.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['Raw_PE_OI'], name='Put OI', marker_color='#22c55e'))
-            fig_oi.update_layout(barmode='group', plot_bgcolor='#0e1117', paper_bgcolor='#0e1117', font=dict(color='#f8fafc'), xaxis_title="Strike", yaxis_title="Open Interest")
-            st.plotly_chart(fig_oi, use_container_width=True)
-
-        with tab2:
-            net_gex = disp_df.get('CE GEX (Cr)', 0) - disp_df.get('PE GEX (Cr)', 0)
-            fig_gex = go.Figure()
-            fig_gex.add_trace(go.Bar(x=disp_df['Strike'], y=net_gex, marker_color=np.where(net_gex > 0, '#ef4444', '#22c55e')))
-            fig_gex.add_hline(y=0, line_color="white")
-            fig_gex.update_layout(plot_bgcolor='#0e1117', paper_bgcolor='#0e1117', font=dict(color='#f8fafc'), xaxis_title="Strike", yaxis_title="Net GEX (Cr)")
-            st.plotly_chart(fig_gex, use_container_width=True)
-
-        with tab3:
-            total_liq = disp_df.get('CE Turnover (Cr)', 0) + disp_df.get('PE Turnover (Cr)', 0)
-            fig_liq = go.Figure()
-            fig_liq.add_trace(go.Scatter(x=disp_df['Strike'], y=total_liq, fill='tozeroy', line=dict(color='#f59e0b', width=3)))
-            fig_liq.update_layout(plot_bgcolor='#0e1117', paper_bgcolor='#0e1117', font=dict(color='#f8fafc'), xaxis_title="Strike", yaxis_title="Total Turnover (Cr)")
-            st.plotly_chart(fig_liq, use_container_width=True)
-
-render_institutional_terminal()
+else:
+    st.warning("⚠️ ऑप्शन चेन डेटा उपलब्ध नहीं है। कृपया अपनी `utils.py` या एपीआई कनेक्शन की जांच करें।")
