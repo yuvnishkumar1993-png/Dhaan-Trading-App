@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import math
+import time
 from datetime import datetime
 
 try:
@@ -46,28 +47,18 @@ except ImportError:
         def fetch_live_option_chain(c, a, s, seg, exp, sym):
             return None, 0.0
 
-# Professional Institutional Styling Injection
+# Professional Styling Injection
 st.markdown("""
 <style>
     .main { background-color: #0e1117; color: #f8fafc; }
     div[data-testid="stHorizontalBlock"] > div { align-items: center; }
     [data-testid="stDataFrame"] { border: 1px solid #30363d; border-radius: 8px; }
-    [data-testid="stDataFrame"] th {
-        position: sticky !important;
-        top: 0 !important;
-        background-color: #161b22 !important;
-        color: #f0f6fc !important;
-        font-weight: 600 !important;
-        z-index: 999 !important;
-        border-bottom: 2px solid #30363d !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("## ⚡ Institutional Quant Terminal Pro - Backtest & Analytics")
 st.markdown("---")
 
-# Session State Check
 if "client_id" not in st.session_state:
     st.session_state.client_id = ""
 if "access_token" not in st.session_state:
@@ -177,11 +168,13 @@ with col_c5:
     show_greeks = st.checkbox("Show Greeks", value=True, key="backtest_greeks")
 
 with col_c6:
+    # SAFE THROTTLED REFRESH (CPU Freezing से बचने के लिए 5 सेकंड का सेफ डिले)
     auto_refresh = st.checkbox("⚡ Live", value=False, key="backtest_refresh")
     if auto_refresh:
+        time.sleep(5)
         st.rerun()
 
-# Fetch Data
+# Fetch Data Safely
 is_simulated = False
 try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
@@ -428,52 +421,7 @@ final_cols = [c for c in matrix_cols if c in disp_df.columns]
 matrix_df = disp_df[final_cols].copy()
 matrix_df = matrix_df.loc[:, ~matrix_df.columns.duplicated()]
 
-atm_strike_val = round(live_spot / 50) * 50
-
-def professional_terminal_styling(row):
-    strike = row['STRIKE']
-    styles = [''] * len(row)
-    is_atm = abs(strike - live_spot) <= 25 or strike == atm_strike_val
-    
-    for i, col_name in enumerate(row.index):
-        if col_name == 'STRIKE':
-            if is_atm:
-                styles[i] = 'background-color: #d97706; color: #ffffff; font-weight: bold; font-size: 15px; border: 2px solid #fbbf24;'
-            else:
-                styles[i] = 'background-color: #1f2937; color: #f9fafb; font-weight: bold;'
-        elif 'CE' in col_name:
-            if strike < live_spot:
-                styles[i] = 'background-color: #111e38; color: #e2e8f0;'
-            else:
-                styles[i] = 'background-color: #0f172a; color: #94a3b8;'
-        elif 'PE' in col_name:
-            if strike > live_spot:
-                styles[i] = 'background-color: #381116; color: #e2e8f0;'
-            else:
-                styles[i] = 'background-color: #1e1114; color: #94a3b8;'
-        else:
-            styles[i] = ''
-            
-        val = row[col_name]
-        if isinstance(val, str):
-            if "Short Build" in val:
-                styles[i] += '; background-color: #7f1d1d; color: #fca5a5; font-weight: bold;'
-            elif "Long Build" in val:
-                styles[i] += '; background-color: #065f46; color: #6ee7b7; font-weight: bold;'
-            elif "Short Cover" in val:
-                styles[i] += '; background-color: #1e3a8a; color: #93c5fd; font-weight: bold;'
-            elif "Long Unwind" in val:
-                styles[i] += '; background-color: #78350f; color: #fde68a; font-weight: bold;'
-        elif isinstance(val, (int, float)):
-            if val > 0 and col_name != 'STRIKE':
-                styles[i] += '; color: #34d399;'
-            elif val < 0:
-                styles[i] += '; color: #f87171;'
-                
-    return styles
-
-styled_df = matrix_df.style.apply(professional_terminal_styling, axis=1)
-
-st.markdown(f"### 📊 Institutional Backtest & Historical Analytics Terminal ({strike_range_mode})")
+# Render Table directly using Streamlit native dataframe without heavy slow styler loops
+st.markdown(f"### 📊 Institutional Backtest & Historical Analytics ({strike_range_mode})")
 st.markdown("---")
-st.dataframe(styled_df, use_container_width=True, height=650, hide_index=True)
+st.dataframe(matrix_df, use_container_width=True, height=650, hide_index=True)
