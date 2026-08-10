@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Page Config
 st.set_page_config(page_title="Quant Terminal", layout="wide")
@@ -25,8 +25,9 @@ master_df = load_master_data()
 
 st.title("⚡ Institutional Quant Terminal Pro")
 
-# --- 1. SAFE SMART ASSET & SCRIP SELECTOR ---
-col1, col2 = st.columns(2)
+# --- 1. SMART CONTROLS (Segment, Scrip, Expiry) ---
+col1, col2, col3 = st.columns(3)
+
 with col1:
     asset_type = st.selectbox("Segment", ["Indices", "F&O Stocks"], key="bk_seg")
 
@@ -53,6 +54,24 @@ with col2:
 
     selected_symbol = st.selectbox("Search Symbol", options=syms, key="bk_sym")
 
+with col3:
+    # सुरक्षित डायनेमिक एक्सपायरी जनरेटर (आगामी गुरुवार और मासिक एक्सपायरी)
+    def get_upcoming_expiries():
+        expiries = []
+        today = datetime.now()
+        # आगामी 4 गुरुवार ढूंढना
+        days_to_thu = (3 - today.weekday() + 7) % 7
+        if days_to_thu == 0: days_to_thu = 7
+        next_thu = today + timedelta(days=days_to_thu)
+        
+        for i in range(4):
+            thu = next_thu + timedelta(weeks=i)
+            expiries.append(thu.strftime("%Y-%m-%d"))
+        return expiries
+
+    expiry_list = get_upcoming_expiries()
+    selected_expiry = st.selectbox("Expiry Date", options=expiry_list, key="bk_exp")
+
 # --- 2. AUTO-DETECT LOT SIZE SAFELY ---
 auto_lot = 25
 lot_col = next((c for c in ['SEM_LOT_UNITS', 'LOT_SIZE', 'LOT_UNITS'] if c in master_df.columns), None)
@@ -67,7 +86,7 @@ else:
     lot_map = {"NIFTY": 25, "BANKNIFTY": 15, "FINNIFTY": 25, "SENSEX": 10, "RELIANCE": 250, "TCS": 175, "SBIN": 750}
     auto_lot = lot_map.get(selected_symbol.upper(), 25)
 
-# --- 3. ASSET-AWARE SMART DATA GENERATOR (सही भाव और स्ट्राइक दिखाने के लिए) ---
+# --- 3. ASSET-AWARE DATA GENERATOR ---
 def get_correct_market_data(sym):
     sym_upper = sym.upper()
     if "BANKNIFTY" in sym_upper:
@@ -82,7 +101,7 @@ def get_correct_market_data(sym):
     elif asset_type == "F&O Stocks" or sym_upper in ["RELIANCE", "TCS", "SBIN", "INFY", "HDFCBANK"]:
         spot = 1500.00
         strikes = np.arange(1400, 1600, 20)
-    else: # Nifty default
+    else:
         spot = 24580.00
         strikes = np.arange(24000, 25000, 50)
 
@@ -96,17 +115,18 @@ def get_correct_market_data(sym):
     return df, spot
 
 # --- 4. AUTOMATIC 5-MINUTE REFRESH FRAGMENT ---
-@st.fragment(run_every=300)  # 300 seconds = 5 minutes
+@st.fragment(run_every=300)  # हर 5 मिनट पर ऑटो-रिफ्रेश
 def render_live_dashboard():
     df, spot = get_correct_market_data(selected_symbol)
     
     # Dashboard Metrics Bar
     st.markdown("---")
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Asset", selected_symbol)
-    m2.metric("Spot Price", f"₹{spot:,.2f}")
-    m3.metric("Lot Size", auto_lot)
-    m4.metric("Last Updated", datetime.now().strftime("%H:%M:%S"))
+    m2.metric("Expiry", selected_expiry)
+    m3.metric("Spot Price", f"₹{spot:,.2f}")
+    m4.metric("Lot Size", auto_lot)
+    m5.metric("Last Updated", datetime.now().strftime("%H:%M:%S"))
     st.markdown("---")
     
     # Dataframe Display
