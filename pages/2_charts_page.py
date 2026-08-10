@@ -95,15 +95,12 @@ with col_c2:
                 sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['NSE_EQ', 'NSE_FO'])]
             
             raw_syms = sub_df[sym_col].dropna().unique().tolist()
-            
-            # हैंग होने से बचाने के लिए फालतू फ्यूचर्स और करेंसी कॉन्ट्रैक्ट्स को फिल्टर करना
             clean_syms = set()
             for s in raw_syms:
                 s_up = str(s).upper()
                 if not any(x in s_up for x in ["FUT", "CE", "PE", "-", "2024", "2025", "2026"]):
                     if len(s_up) <= 15:
                         clean_syms.add(s_up)
-            
             available_symbols = sorted(list(clean_syms))
         except Exception:
             available_symbols = []
@@ -150,8 +147,8 @@ except Exception:
     chain_df, live_spot = None, 0.0
 
 if chain_df is None or chain_df.empty or live_spot <= 0 or 'Strike' not in chain_df.columns:
-    live_spot, base_st = 24583.80, 24600
-    strikes = np.arange(base_st - 1000, base_st + 1050, 50)
+    live_spot, base_st = 57686.90, 57686
+    strikes = np.arange(base_st - 1000, base_st + 1050, 100)
     recs = [{"Strike": int(st_val), "STRIKE": int(st_val), "Raw_CE_OI": 500000, "Raw_PE_OI": 600000, "CE_Volume": 1000000, "PE_Volume": 1200000, "CE_IV": 13.0, "PE_IV": 13.5} for st_val in strikes]
     chain_df = pd.DataFrame(recs)
 
@@ -184,18 +181,24 @@ sensibull_layout = dict(
 
 strike_str_list = [str(int(s)) for s in disp_df['Strike']]
 
+# Safe Series Extractors to prevent ValueError
+ce_oi_vals = disp_df['Raw_CE_OI'] if 'Raw_CE_OI' in disp_df.columns else [0]*len(disp_df)
+pe_oi_vals = disp_df['Raw_PE_OI'] if 'Raw_PE_OI' in disp_df.columns else [0]*len(disp_df)
+ce_gex_vals = disp_df['CE GEX (Cr)'] if 'CE GEX (Cr)' in disp_df.columns else [0]*len(disp_df)
+pe_gex_vals = disp_df['PE GEX (Cr)'] if 'PE GEX (Cr)' in disp_df.columns else [0]*len(disp_df)
+
 # --- MOD A ---
 st.markdown("##### [MOD A] Open Interest Profile & Support/Resistance")
 fig_a = go.Figure()
-fig_a.add_trace(go.Bar(x=strike_str_list, y=disp_df.get('Raw_CE_OI', 0), name='CE OI', marker_color='#ef4444'))
-fig_a.add_trace(go.Bar(x=strike_str_list, y=disp_df.get('Raw_PE_OI', 0), name='PE OI', marker_color='#22c55e'))
+fig_a.add_trace(go.Bar(x=strike_str_list, y=ce_oi_vals, name='CE OI', marker_color='#ef4444'))
+fig_a.add_trace(go.Bar(x=strike_str_list, y=pe_oi_vals, name='PE OI', marker_color='#22c55e'))
 fig_a.update_layout(**sensibull_layout, barmode="group")
 st.plotly_chart(fig_a, use_container_width=True)
 
 # --- MOD B ---
 st.markdown("##### [MOD B] Net Gamma Exposure (GEX)")
 fig_b = go.Figure()
-fig_b.add_trace(go.Bar(x=strike_str_list, y=disp_df.get('CE GEX (Cr)', 0), name='CE GEX', marker_color='#38bdf8'))
-fig_b.add_trace(go.Bar(x=strike_str_list, y=disp_df['PE GEX (Cr)', 0], name='PE GEX', marker_color='#c084fc'))
+fig_b.add_trace(go.Bar(x=strike_str_list, y=ce_gex_vals, name='CE GEX', marker_color='#38bdf8'))
+fig_b.add_trace(go.Bar(x=strike_str_list, y=pe_gex_vals, name='PE GEX', marker_color='#c084fc'))
 fig_b.update_layout(**sensibull_layout, barmode="group")
 st.plotly_chart(fig_b, use_container_width=True)
