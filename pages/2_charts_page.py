@@ -31,7 +31,7 @@ except ImportError:
 st.set_page_config(
     page_title="Dhaan Trading App - Advanced Graphical Terminal",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # Custom Styling for Clean Dashboard Look
@@ -53,8 +53,21 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- SIDEBAR: ASSET / SCRIPT SELECTOR ---
+st.sidebar.header("📊 Terminal Control")
+available_assets = ["SENSEX", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]
+current_selected = st.session_state.get("selected_asset", "SENSEX")
+if current_selected not in available_assets:
+    available_assets.insert(0, current_selected)
+
+asset = st.sidebar.selectbox(
+    "Select Script / Asset", 
+    available_assets, 
+    index=available_assets.index(current_selected)
+)
+st.session_state["selected_asset"] = asset
+
 # Fetch Market Data safely from dhan_api.py
-asset = st.session_state.get("selected_asset", "SENSEX")
 try:
     spot, chain_df, _, _, _ = get_market_data(asset)
 except Exception as e:
@@ -72,7 +85,7 @@ except Exception as e:
 
 n_strikes = len(chain_df) if chain_df is not None and not chain_df.empty else 5
 
-st.header(f"🖥️ PAGE 2: ADVANCED GRAPHICAL TERMINAL (ALL 10 MODULES) — {asset}")
+st.header(f"🖥️ PAGE 2: ADVANCED GRAPHICAL TERMINAL — {asset}")
 st.markdown(f"**Spot Price:** `{spot}` | **Total Strikes Tracked:** `{n_strikes}`")
 
 # Tabs for 10 Modules
@@ -88,7 +101,7 @@ with t1:
     fig.add_trace(go.Bar(x=chain_df['strike'], y=chain_df['ce_oi'], name='CE OI (Resistance)', marker_color='#FF5252'))
     fig.add_trace(go.Bar(x=chain_df['strike'], y=chain_df['pe_oi'], name='PE OI (Support)', marker_color='#00E676'))
     fig.update_layout(
-        title="[MOD A] Strike-Wise Open Interest Profile", 
+        title=f"[MOD A] Strike-Wise Open Interest Profile — {asset}", 
         template="plotly_dark", 
         barmode="group",
         xaxis_title="Strike Price",
@@ -102,7 +115,7 @@ with t2:
     fig = go.Figure()
     fig.add_trace(go.Bar(x=chain_df['strike'], y=gex_vals, name='Net Gamma', marker_color='#29B6F6'))
     fig.update_layout(
-        title="[MOD B] Net Gamma Exposure (GEX) Distribution", 
+        title=f"[MOD B] Net Gamma Exposure (GEX) Distribution — {asset}", 
         template="plotly_dark",
         xaxis_title="Strike Price",
         yaxis_title="Gamma Exposure"
@@ -115,7 +128,7 @@ with t3:
     fig.add_trace(go.Scatter(x=chain_df['strike'], y=chain_df['ce_iv'], mode='lines+markers', name='CE IV', line=dict(color='#FF5252', width=2)))
     fig.add_trace(go.Scatter(x=chain_df['strike'], y=chain_df['pe_iv'], mode='lines+markers', name='PE IV', line=dict(color='#00E676', width=2)))
     fig.update_layout(
-        title="[MOD C] Implied Volatility (IV) Smile Curve", 
+        title=f"[MOD C] Implied Volatility (IV) Smile Curve — {asset}", 
         template="plotly_dark",
         xaxis_title="Strike Price",
         yaxis_title="IV (%)"
@@ -128,7 +141,7 @@ with t4:
     fig.add_trace(go.Bar(x=chain_df['strike'], y=chain_df['ce_volume'], name='CE Vol', marker_color='#AB47BC'))
     fig.add_trace(go.Bar(x=chain_df['strike'], y=chain_df['pe_volume'], name='PE Vol', marker_color='#FFA726'))
     fig.update_layout(
-        title="[MOD D] Strike-Wise Volume Distribution", 
+        title=f"[MOD D] Strike-Wise Volume Distribution — {asset}", 
         template="plotly_dark", 
         barmode="stack",
         xaxis_title="Strike Price",
@@ -143,7 +156,7 @@ with t5:
     fig = go.Figure()
     fig.add_trace(go.Bar(x=chain_df['strike'], y=oi_change_vals, name='Change in OI', marker_color='#26A69A'))
     fig.update_layout(
-        title="[MOD E] Strike-Wise Change in Open Interest", 
+        title=f"[MOD E] Strike-Wise Change in Open Interest — {asset}", 
         template="plotly_dark",
         xaxis_title="Strike Price",
         yaxis_title="Change in OI"
@@ -156,7 +169,7 @@ with t6:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=chain_df['strike'], y=theta_vals, mode='lines+markers', name='Theta', line=dict(color='#FFEE58', width=2)))
     fig.update_layout(
-        title="[MOD F] Option Premium Decay & Theta Wave", 
+        title=f"[MOD F] Option Premium Decay & Theta Wave — {asset}", 
         template="plotly_dark",
         xaxis_title="Strike Price",
         yaxis_title="Theta Value"
@@ -169,7 +182,7 @@ with t7:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=chain_df['strike'], y=pain_vals, mode='lines+markers', name='Pain', line=dict(color='#EC407A', width=2)))
     fig.update_layout(
-        title="[MOD G] Max Pain Strike Analysis Curve", 
+        title=f"[MOD G] Max Pain Strike Analysis Curve — {asset}", 
         template="plotly_dark",
         xaxis_title="Strike Price",
         yaxis_title="Total Pain Value"
@@ -187,7 +200,7 @@ with t8:
         line=dict(color='#42A5F5', width=3)
     ))
     fig.update_layout(
-        title="[MOD H] Intraday Put-Call Ratio (PCR) Trend Line", 
+        title=f"[MOD H] Intraday Put-Call Ratio (PCR) Trend Line — {asset}", 
         template="plotly_dark",
         xaxis_title="Time",
         yaxis_title="PCR Value"
@@ -200,7 +213,7 @@ with t9:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=chain_df['strike'], y=delta_vals, mode='lines+markers', name='Delta', line=dict(color='#66BB6A', width=2)))
     fig.update_layout(
-        title="[MOD I] Cumulative Delta Flow Matrix", 
+        title=f"[MOD I] Cumulative Delta Flow Matrix — {asset}", 
         template="plotly_dark",
         xaxis_title="Strike Price",
         yaxis_title="Delta"
@@ -212,7 +225,7 @@ with t10:
     surface_z = np.random.rand(n_strikes, 5)
     fig = go.Figure(data=[go.Surface(z=surface_z, x=chain_df['strike'], y=[1, 2, 3, 4, 5])])
     fig.update_layout(
-        title="[MOD J] Multi-Strike Volatility Surface 3D", 
+        title=f"[MOD J] Multi-Strike Volatility Surface 3D — {asset}", 
         template="plotly_dark",
         scene=dict(
             xaxis_title='Strikes',
