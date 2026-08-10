@@ -28,10 +28,10 @@ if ROOT_DIR not in sys.path:
 try:
     from dhan_api import InstitutionalDataEngine
 except ImportError:
-    st.error("❌ `dhan_api.py` module could not be imported. Please check root directory.")
+    st.error("❌ `dhan_api.py` module could not be imported.")
     st.stop()
 
-# Sensibull & Professional Dark Theme Styling
+# Professional Styling
 st.markdown("""
 <style>
     .main { background-color: #0b0e14; color: #f8fafc; }
@@ -49,7 +49,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("### ⚡ Live Institutional Quant Terminal (Pro)")
+st.markdown("### ⚡ Fixed & Locked Quant Terminal (Pro)")
 st.markdown("---")
 
 if "client_id" not in st.session_state: st.session_state.client_id = ""
@@ -58,7 +58,6 @@ if "access_token" not in st.session_state: st.session_state.access_token = ""
 client_id = st.session_state.client_id
 access_token = st.session_state.access_token
 
-# Load Scrip Master to get correct metadata
 @st.cache_data(ttl=3600)
 def get_master_df():
     try:
@@ -78,7 +77,6 @@ with col_c1:
     selected_symbol = st.selectbox("📌 Asset", popular_symbols, key="page_asset_sel")
     st.session_state.global_symbol = selected_symbol
 
-# Resolve Security ID and Segment precisely from master
 sec_id, seg, auto_lot_size = 13, "IDX_I", 25
 fallback_map = {
     "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 25},
@@ -118,7 +116,7 @@ with col_c2:
 with col_c3:
     strike_range_mode = st.selectbox("🎯 Range", ["±5 Strikes", "±10 Strikes", "±20 Strikes", "Full Chain (All)"], index=1, key=f"range_{selected_symbol}")
 
-# --- FETCH REAL LIVE OPTION CHAIN DIRECTLY FROM DHAN ENGINE ---
+# --- FETCH REAL LIVE OPTION CHAIN DIRECTLY ---
 try:
     chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
         client_id, access_token, sec_id, seg, selected_expiry, selected_symbol
@@ -128,20 +126,34 @@ except Exception as e:
     chain_df, live_spot = pd.DataFrame(), 0.0
 
 if chain_df is None or chain_df.empty or live_spot <= 0:
-    st.warning(f"⚠️ **{selected_symbol}** के लिए लाइव ऑप्शन चेन डेटा अभी उपलब्ध नहीं है। कृपया सुनिश्चित करें कि बाजार खुला है या आपके API क्रेडेंशियल्स सही हैं।")
+    st.warning(f"⚠️ **{selected_symbol}** के लिए लाइव ऑप्शन चेन डेटा प्राप्त नहीं हुआ। कृपया जाँच करें कि API टोकन सही हैं या बाजार चालू है।")
     st.stop()
 
-# --- CLEAN & SORT STRIKES PROPERLY (ASCENDING ORDER) ---
-strike_col = next((c for c in ['Strike', 'STRIKE', 'strike'] if c in chain_df.columns), chain_df.columns[0])
+# --- BULLETPROOF COLUMN MAPPING & STRIKE SORTING ---
+strike_col = next((c for c in chain_df.columns if 'STRIKE' in str(c).upper() or 'STRIKE' == str(c).upper()), None)
+if not strike_col:
+    strike_col = chain_df.columns[0]
+
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
-chain_df = chain_df.sort_values('Strike', ascending=True).reset_index(drop=True)
 
-# Column mapping normalization
-if 'CE_LTP' not in chain_df.columns: chain_df['CE_LTP'] = chain_df.get('Call_LTP', 0.0)
-if 'PE_LTP' not in chain_df.columns: chain_df['PE_LTP'] = chain_df.get('Put_LTP', 0.0)
-if 'Raw_CE_OI' not in chain_df.columns: chain_df['Raw_CE_OI'] = chain_df.get('CE_OI', chain_df.get('Call_OI', 0))
-if 'Raw_PE_OI' not in chain_df.columns: chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 0))
+# Bulletproof mapping for OI and LTP regardless of naming conventions
+for col in chain_df.columns:
+    uc = str(col).upper()
+    if 'CE' in uc and ('OI' in uc) and 'CHG' not in uc:
+        chain_df['Raw_CE_OI'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(0)
+    elif 'PE' in uc and ('OI' in uc) and 'CHG' not in uc:
+        chain_df['Raw_PE_OI'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(0)
+    elif 'CALL' in uc and ('OI' in uc) and 'CHG' not in uc:
+        chain_df['Raw_CE_OI'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(0)
+    elif 'PUT' in uc and ('OI' in uc) and 'CHG' not in uc:
+        chain_df['Raw_PE_OI'] = pd.to_numeric(chain_df[col], errors='coerce').fillna(0)
+
+if 'Raw_CE_OI' not in chain_df.columns: chain_df['Raw_CE_OI'] = 0
+if 'Raw_PE_OI' not in chain_df.columns: chain_df['Raw_PE_OI'] = 0
+
+# ALWAYS SORT ASCENDING BY STRIKE SO THEY NEVER WANDER
+chain_df = chain_df.sort_values('Strike', ascending=True).reset_index(drop=True)
 
 def norm_cdf(x): return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 def norm_pdf(x): return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
@@ -177,7 +189,7 @@ def calculate_advanced_metrics(df, spot, lot):
 
 chain_df = calculate_advanced_metrics(chain_df, live_spot, auto_lot_size)
 
-# Strike filtering for display while preserving ascending order
+# Strike filtering while strictly maintaining ascending order
 chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
 if "±5" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-5):min(len(chain_df), idx+6)].copy()
 elif "±10" in strike_range_mode: idx = chain_df['Dist'].idxmin(); disp_df = chain_df.iloc[max(0, idx-10):min(len(chain_df), idx+11)].copy()
@@ -188,10 +200,6 @@ disp_df = disp_df.sort_values('Strike', ascending=True).reset_index(drop=True)
 
 f_ce_oi, f_pe_oi = disp_df['Raw_CE_OI'].sum(), disp_df['Raw_PE_OI'].sum()
 oi_pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
-
-f_ce_vol = disp_df.get('CE_Volume', disp_df.get('Call_Volume', 0)).sum()
-f_pe_vol = disp_df.get('PE_Volume', disp_df.get('Put_Volume', 0)).sum()
-vol_pcr_val = round(f_pe_vol / f_ce_vol, 2) if f_ce_vol > 0 else 0.90
 
 def calculate_max_pain(df, spot):
     strikes, ce_oi, pe_oi = df['Strike'].values, df['Raw_CE_OI'].values, df['Raw_PE_OI'].values
@@ -211,7 +219,8 @@ with mc2: st.metric("OI PCR", oi_pcr_val)
 with mc3: st.metric("Max Pain", max_pain_val)
 st.markdown("---")
 
-sensibull_layout = dict(
+# Sensibull-Style Fixed Layout Config (xaxis type='category' locks strikes in clean order)
+locked_layout = dict(
     template="plotly_dark",
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(15, 23, 42, 0.8)",
@@ -219,10 +228,11 @@ sensibull_layout = dict(
     hovermode="x unified",
     margin=dict(l=15, r=15, t=35, b=15),
     legend=dict(orientation="h", y=1.12, x=0, font=dict(size=10)),
-    height=340
+    height=340,
+    xaxis=dict(type='category', tickangle=-30)  # Labeled categories lock strikes in place perfectly
 )
 
-st.markdown(f"### 📊 Professional Live Analytics Suite ({selected_symbol})")
+st.markdown(f"### 📊 Professional Locked Analytics Suite ({selected_symbol})")
 st.markdown("---")
 
 n_strikes = len(disp_df)
@@ -232,11 +242,10 @@ st.markdown("##### [MOD A] Open Interest Profile (Support & Resistance)")
 fig_a = go.Figure()
 fig_a.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['Raw_CE_OI'], name='CE OI (Res)', marker_color='#ef4444'))
 fig_a.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['Raw_PE_OI'], name='PE OI (Sup)', marker_color='#22c55e'))
-fig_a.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8", annotation_text="Spot", annotation_position="top")
-fig_a.update_layout(**sensibull_layout, barmode="group", xaxis=dict(type='category'))
+fig_a.update_layout(**locked_layout, barmode="group")
 st.plotly_chart(fig_a, use_container_width=True)
-max_ce = disp_df.loc[disp_df['Raw_CE_OI'].idxmax()]['Strike']
-max_pe = disp_df.loc[disp_df['Raw_PE_OI'].idxmax()]['Strike']
+max_ce = disp_df.loc[disp_df['Raw_CE_OI'].idxmax()]['Strike'] if not disp_df.empty else 0
+max_pe = disp_df.loc[disp_df['Raw_PE_OI'].idxmax()]['Strike'] if not disp_df.empty else 0
 st.info(f"💡 **Signal:** Resistance: **{max_ce}** | Support: **{max_pe}**")
 st.markdown("---")
 
@@ -245,8 +254,7 @@ st.markdown("##### [MOD B] Net Gamma Exposure (GEX)")
 fig_b = go.Figure()
 fig_b.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['CE GEX (Cr)'], name='CE GEX', marker_color='#38bdf8'))
 fig_b.add_trace(go.Bar(x=disp_df['Strike'], y=disp_df['PE GEX (Cr)'], name='PE GEX', marker_color='#c084fc'))
-fig_b.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
-fig_b.update_layout(**sensibull_layout, barmode="group", xaxis=dict(type='category'))
+fig_b.update_layout(**locked_layout, barmode="group")
 st.plotly_chart(fig_b, use_container_width=True)
 st.info("💡 **Signal:** High GEX peaks act as institutional pin zones.")
 st.markdown("---")
@@ -258,8 +266,7 @@ pe_iv = disp_df.get('PE_IV', disp_df.get('Put_IV', [13.5]*n_strikes))
 fig_c = go.Figure()
 fig_c.add_trace(go.Scatter(x=disp_df['Strike'], y=ce_iv, mode='lines+markers', name='CE IV', line=dict(color='#ef4444', width=2)))
 fig_c.add_trace(go.Scatter(x=disp_df['Strike'], y=pe_iv, mode='lines+markers', name='PE IV', line=dict(color='#22c55e', width=2)))
-fig_c.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
-fig_c.update_layout(**sensibull_layout, xaxis=dict(type='category'))
+fig_c.update_layout(**locked_layout)
 st.plotly_chart(fig_c, use_container_width=True)
 st.info("💡 **Signal:** Steeper Put IV skew shows heavy downside protection.")
 st.markdown("---")
@@ -271,8 +278,7 @@ pe_vol = disp_df.get('PE_Volume', disp_df.get('Put_Volume', [0]*n_strikes))
 fig_d = go.Figure()
 fig_d.add_trace(go.Bar(x=disp_df['Strike'], y=ce_vol, name='CE Vol', marker_color='#c084fc'))
 fig_d.add_trace(go.Bar(x=disp_df['Strike'], y=pe_vol, name='PE Vol', marker_color='#fbbf24'))
-fig_d.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
-fig_d.update_layout(**sensibull_layout, barmode="stack", xaxis=dict(type='category'))
+fig_d.update_layout(**locked_layout, barmode="stack")
 st.plotly_chart(fig_d, use_container_width=True)
 st.info("💡 **Signal:** Heavy volume concentrations represent immediate action nodes.")
 st.markdown("---")
@@ -282,8 +288,7 @@ st.markdown("##### [MOD E] Strike-Wise Change in Open Interest")
 ce_chg = disp_df.get('CE_Chg_OI', disp_df.get('Call_Chg_OI', [0]*n_strikes))
 fig_e = go.Figure()
 fig_e.add_trace(go.Bar(x=disp_df['Strike'], y=ce_chg, name='OI Chg', marker_color='#2dd4bf'))
-fig_e.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
-fig_e.update_layout(**sensibull_layout, xaxis=dict(type='category'))
+fig_e.update_layout(**locked_layout)
 st.plotly_chart(fig_e, use_container_width=True)
 st.info("💡 **Signal:** Positive OI spikes indicate fresh smart-money writing.")
 st.markdown("---")
@@ -293,38 +298,29 @@ st.markdown("##### [MOD F] Option Premium Decay (Theta)")
 theta = disp_df.get('CE Theta', [-15.0]*n_strikes)
 fig_f = go.Figure()
 fig_f.add_trace(go.Scatter(x=disp_df['Strike'], y=theta, mode='lines+markers', name='Theta', line=dict(color='#facc15', width=2)))
-fig_f.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
-fig_f.update_layout(**sensibull_layout, xaxis=dict(type='category'))
+fig_f.update_layout(**locked_layout)
 st.plotly_chart(fig_f, use_container_width=True)
 st.info("💡 **Signal:** Maximum time decay is concentrated at the ATM strike.")
 st.markdown("---")
 
 # --- MODULE G: Max Pain ---
 st.markdown(f"##### [MOD G] Max Pain Strike Curve (Current Target: {max_pain_val})")
-pain_vals = np.sort(disp_df['Raw_CE_OI'].values)[::-1]
+pain_vals = np.sort(disp_df['Raw_CE_OI'].values)[::-1] if 'Raw_CE_OI' in disp_df.columns else [0]*n_strikes
 fig_g = go.Figure()
 fig_g.add_trace(go.Scatter(x=disp_df['Strike'], y=pain_vals, mode='lines+markers', name='Pain', line=dict(color='#f43f5e', width=2), fill='tozeroy'))
-fig_g.add_vline(x=max_pain_val, line_dash="dot", line_color="#f43f5e", annotation_text="Max Pain", annotation_position="top")
-fig_g.update_layout(**sensibull_layout, xaxis=dict(type='category'))
+fig_g.update_layout(**locked_layout)
 st.plotly_chart(fig_g, use_container_width=True)
 st.info(f"💡 **Signal:** Expiry settlement tends to get pulled toward **{max_pain_val}**.")
 st.markdown("---")
 
-# --- MODULE H: Dual PCR Trend ---
-st.markdown("##### [MOD H] Dual PCR Trend vs Spot Action")
+# --- MODULE H: PCR Trend ---
+st.markdown("##### [MOD H] Intraday PCR Trend")
 time_slots = ['09:30', '10:30', '11:30', '12:30', '13:30', '14:30', '15:15']
-np.random.seed(42)
-sim_spot_trend = np.linspace(live_spot * 0.995, live_spot * 1.005, len(time_slots))
-sim_oi_pcr = np.clip(oi_pcr_val + np.random.normal(0, 0.05, len(time_slots)), 0.5, 2.0)
-sim_vol_pcr = np.clip(vol_pcr_val + np.random.normal(0, 0.08, len(time_slots)), 0.4, 2.2)
-
-fig_h = make_subplots(specs=[[{"secondary_y": True}]])
-fig_h.add_trace(go.Scatter(x=time_slots, y=sim_oi_pcr, name='OI PCR', line=dict(color='#38bdf8', width=2)), secondary_y=False)
-fig_h.add_trace(go.Scatter(x=time_slots, y=sim_vol_pcr, name='Vol PCR', line=dict(color='#fbbf24', width=2, dash='dot')), secondary_y=False)
-fig_h.add_trace(go.Scatter(x=time_slots, y=sim_spot_trend, name='Spot', line=dict(color='#4ade80', width=2)), secondary_y=True)
-fig_h.update_layout(**sensibull_layout)
+fig_h = go.Figure()
+fig_h.add_trace(go.Scatter(x=time_slots, y=[oi_pcr_val]*len(time_slots), mode='lines+markers', name='PCR', line=dict(color='#38bdf8', width=2)))
+fig_h.update_layout(**locked_layout, xaxis=dict(type='category', tickangle=0))
 st.plotly_chart(fig_h, use_container_width=True)
-st.info(f"💡 **Signal:** OI PCR: **{oi_pcr_val}** | Vol PCR: **{vol_pcr_val}**.")
+st.info(f"💡 **Signal:** Current PCR stands at **{oi_pcr_val}**.")
 st.markdown("---")
 
 # --- MODULE I: Delta Flow ---
@@ -332,8 +328,7 @@ st.markdown("##### [MOD I] Cumulative Delta Flow Matrix")
 delta = disp_df.get('CE Delta', [0.5]*n_strikes)
 fig_i = go.Figure()
 fig_i.add_trace(go.Scatter(x=disp_df['Strike'], y=delta, mode='lines+markers', name='Delta', line=dict(color='#4ade80', width=2)))
-fig_i.add_vline(x=live_spot, line_dash="dash", line_color="#38bdf8")
-fig_i.update_layout(**sensibull_layout, xaxis=dict(type='category'))
+fig_i.update_layout(**locked_layout)
 st.plotly_chart(fig_i, use_container_width=True)
 st.info("💡 **Signal:** Delta slope shows directional option sensitivity.")
 st.markdown("---")
@@ -342,6 +337,6 @@ st.markdown("---")
 st.markdown("##### [MOD J] Volatility Surface 3D")
 surface_z = np.random.rand(n_strikes, 5)
 fig_j = go.Figure(data=[go.Surface(z=surface_z, x=disp_df['Strike'], y=[1, 2, 3, 4, 5], colorscale='Viridis')])
-fig_j.update_layout(**sensibull_layout, scene=dict(xaxis_title='Strikes', yaxis_title='Tenor', zaxis_title='Vol'))
+fig_j.update_layout(**locked_layout, scene=dict(xaxis_title='Strikes', yaxis_title='Tenor', zaxis_title='Vol'))
 st.plotly_chart(fig_j, use_container_width=True)
 st.info("💡 **Signal:** 3D surface tracks risk skew across multiple term structures.")
