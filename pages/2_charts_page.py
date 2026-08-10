@@ -161,18 +161,20 @@ with m5: st.metric("Total Put Vol", f"{total_put_vol:,}")
 
 st.markdown("---")
 
-# Find exact matching category string for Vlines safely
 closest_spot_strike = str(int(min(disp_df['Strike'], key=lambda x: abs(x - live_spot))))
 closest_pain_strike = str(int(min(disp_df['Strike'], key=lambda x: abs(x - max_pain_val))))
 
-# --- PLOTLY CHART FOR MOD A WITH ANNOTATIONS ---
+# --- PLOTLY CHART FOR MOD A WITH SAFE SHAPES ---
 fig = go.Figure()
 fig.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_CE_OI'], name='CE OI (Resistance)', marker_color='#ef4444'))
 fig.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_PE_OI'], name='PE OI (Support)', marker_color='#22c55e'))
 
-# Safely add vertical lines using exact matching categories
-fig.add_vline(x=closest_spot_strike, line_dash="dash", line_color="#38bdf8", annotation_text=f"Spot: {live_spot:.1f}", annotation_position="top left")
-fig.add_vline(x=closest_pain_strike, line_dash="dot", line_color="#f43f5e", annotation_text=f"Max Pain: {max_pain_val}", annotation_position="top right")
+# Safely add vertical indicator lines using shapes and annotations instead of add_vline
+fig.add_shape(type="line", x0=closest_spot_strike, x1=closest_spot_strike, y0=0, y1=1, yref="paper", line=dict(color="#38bdf8", dash="dash", width=2))
+fig.add_annotation(x=closest_spot_strike, y=1, yref="paper", text=f"Spot: {live_spot:.1f}", showarrow=False, yanchor="bottom", font=dict(color="#38bdf8", size=10))
+
+fig.add_shape(type="line", x0=closest_pain_strike, x1=closest_pain_strike, y0=0, y1=1, yref="paper", line=dict(color="#f43f5e", dash="dot", width=2))
+fig.add_annotation(x=closest_pain_strike, y=0.9, yref="paper", text=f"Max Pain: {max_pain_val}", showarrow=False, yanchor="bottom", font=dict(color="#f43f5e", size=10))
 
 fig.update_layout(
     template="plotly_dark",
