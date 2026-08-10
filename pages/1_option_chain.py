@@ -101,14 +101,15 @@ with col_c1:
 # Precise Auto-Detection for Security ID, Segment, and Lot Size
 sec_id, seg, auto_lot_size = 13, "IDX_I", 25
 
-# Standard Exchange Lot Size Fallbacks (जिन्हें मास्टर से सही वैलिडेट किया जाएगा)
+
+# Standard Exchange Lot Size Map (Updated as per CSV & SENSEX = 20)
 fallback_map = {
-    "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 25},
-    "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 15},
-    "FINNIFTY": {"sec_id": 27, "seg": "IDX_I", "lot": 25},
-    "SENSEX": {"sec_id": 51, "seg": "BSE_IDX", "lot": 10},
-    "RELIANCE": {"sec_id": 2885, "seg": "NSE_EQ", "lot": 250},
-    "TCS": {"sec_id": 11536, "seg": "NSE_EQ", "lot": 175},
+    "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 65},
+    "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 30},
+    "FINNIFTY": {"sec_id": 27, "seg": "IDX_I", "lot": 60},
+    "SENSEX": {"sec_id": 51, "seg": "BSE_IDX", "lot": 20},
+    "RELIANCE": {"sec_id": 2885, "seg": "NSE_EQ", "lot": 500},
+    "TCS": {"sec_id": 11536, "seg": "NSE_EQ", "lot": 225},
     "SBIN": {"sec_id": 3045, "seg": "NSE_EQ", "lot": 750}
 }
 
