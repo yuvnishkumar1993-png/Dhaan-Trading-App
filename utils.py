@@ -10,10 +10,7 @@ def norm_pdf(x):
     return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
 def fetch_available_expiries(client_id, access_token, sec_id, seg):
-    """
-    Dhan API या फॉलबैक से एक्सपायरी डेट्स फेच करता है 
-    और उन्हें सबसे पास से दूर के क्रम में सॉर्ट करता है।
-    """
+    """दिए गए एसेट के लिए उपलब्ध एक्सपायरी डेट्स फेच और सॉर्ट करता है"""
     expiries = []
     try:
         from dhan_api import InstitutionalDataEngine
@@ -23,19 +20,16 @@ def fetch_available_expiries(client_id, access_token, sec_id, seg):
     except Exception:
         pass
     
-    # यदि API से एक्सपायरी नहीं मिली, तो आगामी गुरुवार (Thursdays) की लिस्ट जनरेट करें
     if not expiries:
         today = datetime.now()
         days_ahead = (3 - today.weekday() + 7) % 7  # 3 = Thursday
         if days_ahead == 0:
             days_ahead = 7
         next_thursday = today + timedelta(days=days_ahead)
-        
         for i in range(5):
             exp_date = next_thursday + timedelta(weeks=i)
             expiries.append(exp_date.strftime("%Y-%m-%d"))
             
-    # तारीखों को सही क्रम (Ascending Order) में सॉर्ट करना
     try:
         expiries = sorted(expiries, key=lambda x: datetime.strptime(str(x)[:10], "%Y-%m-%d"))
     except Exception:
@@ -44,7 +38,7 @@ def fetch_available_expiries(client_id, access_token, sec_id, seg):
     return expiries
 
 def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symbol):
-    """असली Dhan API या फॉलबैक से ऑप्शन चेन डेटा फेच करता है"""
+    """Dhan API या फॉलबैक सिमुलेशन से लाइव ऑप्शन चेन डेटा फेच करता है"""
     try:
         from dhan_api import InstitutionalDataEngine
         df, spot = InstitutionalDataEngine.fetch_live_option_chain(
@@ -55,7 +49,7 @@ def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symb
     except Exception:
         pass
     
-    # फॉलबैक डायनेमिक सिमुलेशन (जब API कनेक्ट न हो)
+    # फॉलबैक डायनेमिक सिमुलेशन डेटा
     spot = 24583.80
     strikes = np.arange(spot - 1000, spot + 1000, 50)
     recs = []
@@ -75,7 +69,7 @@ def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symb
     return pd.DataFrame(recs), spot
 
 def normalize_columns(df):
-    """कอลम नामों को सही फॉर्मेट में मैप करता है"""
+    """कॉलम नामों को मानकीकृत (Standardize) करता है"""
     df.columns = [str(c).strip() for c in df.columns]
     for col in ['Strike', 'STRIKE', 'strike_price', 'StrikePrice']:
         if col in df.columns:
@@ -88,7 +82,7 @@ def normalize_columns(df):
     df['STRIKE'] = df['Strike']
 
     if 'Raw_CE_OI' not in df.columns:
-        for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest', 'CE_OI']:
+        for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest']:
             if c in df.columns:
                 df['Raw_CE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(100000)
                 break
@@ -96,7 +90,7 @@ def normalize_columns(df):
             df['Raw_CE_OI'] = 100000
 
     if 'Raw_PE_OI' not in df.columns:
-        for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest', 'PE_OI']:
+        for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest']:
             if c in df.columns:
                 df['Raw_PE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(100000)
                 break
@@ -110,28 +104,18 @@ def calculate_max_pain(df, spot):
         return int(spot) if spot else 0
         
     strikes = df['Strike'].values
-    
-    ce_col = 'Raw_CE_OI' if 'Raw_CE_OI' in df.columns else ('CE_OpenInterest' if 'CE_OpenInterest' in df.columns else None)
-    pe_col = 'Raw_PE_OI' if 'Raw_PE_OI' in df.columns else ('PE_OpenInterest' in df.columns else None)
-    
-    if not ce_col or not pe_col:
-        return int(spot)
-        
-    ce_oi = df[ce_col].values
-    pe_oi = df[pe_col].values
+    ce_oi = df['Raw_CE_OI'].values
+    pe_oi = df['Raw_PE_OI'].values
     
     min_payout = float('inf')
     max_pain_strike = strikes[0]
     
     for exp_price in strikes:
-        payout = 0
-        for i, K in enumerate(strikes):
-            if exp_price > K: 
-                payout += (exp_price - K) * ce_oi[i]
-            if exp_price < K: 
-                payout += (K - exp_price) * pe_oi[i]
-        if payout < min_payout: 
-            min_payout = payout
+        call_pain = np.maximum(0, exp_price - strikes) * ce_oi
+        put_pain = np.maximum(0, strikes - exp_price) * pe_oi
+        total_pain = (call_pain + put_pain).sum()
+        if total_pain < min_payout:
+            min_payout = total_pain
             max_pain_strike = exp_price
             
     return int(max_pain_strike)
@@ -141,15 +125,6 @@ def calculate_advanced_metrics(df, spot, lot):
         return df
         
     r, T = 0.06, 2 / 365.0
-    
-    # फिक्स: डुप्लीकेट की 'PE GEX (Cr)' को सुधारकर 'CE GEX (Cr)' और 'PE GEX (Cr)' अलग-अलग किया गया है
-    res = {k: [] for k in [
-        'CE Delta', 'PE Delta', 'Gamma', 'CE Theta', 'PE Theta', 
-        'CE Vega', 'PE Vega', 'CE Vanna', 'PE Vanna', 'CE Charm', 
-        'PE Charm', 'CE GEX (Cr)', 'PE GEX (Cr)', 'CE Turnover (Cr)', 'PE Turnover (Cr)'
-    ]}
-    
-    # डिक्शनरी री-असाइनमेंट से सेफ करने के लिए कीज को स्पष्ट किया गया है
     keys_list = [
         'CE Delta', 'PE Delta', 'Gamma', 'CE Theta', 'PE Theta', 
         'CE Vega', 'PE Vega', 'CE Vanna', 'PE Vanna', 'CE Charm', 
@@ -164,13 +139,11 @@ def calculate_advanced_metrics(df, spot, lot):
         sigma = (c_iv + p_iv) / 2.0
         
         cd, pd_val, gam, cth, pth, veg, van, chm = 0.5, -0.5, 0.001, -5.0, -5.0, 10.0, 0.01, -0.01
-        
         try:
             if spot > 0 and K > 0 and sigma > 0 and T > 0:
                 d1 = (math.log(spot / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
                 d2 = d1 - sigma * math.sqrt(T)
                 cdf_d1, pdf_d1 = norm_cdf(d1), norm_pdf(d1)
-                
                 cd = round(cdf_d1, 2)
                 pd_val = round(cdf_d1 - 1.0, 2)
                 gam = round(pdf_d1 / (spot * sigma * math.sqrt(T)), 5)
@@ -194,8 +167,8 @@ def calculate_advanced_metrics(df, spot, lot):
         res['CE Charm'].append(chm)
         res['PE Charm'].append(chm)
         
-        raw_ce_oi = float(row.get('Raw_CE_OI', row.get('CE_OpenInterest', 0)) or 0)
-        raw_pe_oi = float(row.get('Raw_PE_OI', row.get('PE_OpenInterest', 0)) or 0)
+        raw_ce_oi = float(row.get('Raw_CE_OI', 0) or 0)
+        raw_pe_oi = float(row.get('Raw_PE_OI', 0) or 0)
         ce_vol = float(row.get('CE_Volume', 0) or 0)
         pe_vol = float(row.get('PE_Volume', 0) or 0)
         ce_ltp = float(row.get('CE_LTP', 0) or 0)
@@ -212,8 +185,36 @@ def calculate_advanced_metrics(df, spot, lot):
             
     return df
 
-def get_buildup(chg_oi, pct_chg):
-    if pct_chg > 0 and chg_oi > 0: return "Short Build"
-    elif pct_chg < 0 and chg_oi < 0: return "Long Unwind"
-    elif pct_chg > 0 and chg_oi < 0: return "Short Cover"
-    return "Long Build"
+def get_fully_processed_data(client_id, access_token, sec_id, seg, expiry, symbol, lot_size):
+    """
+    मास्टर फंक्शन: डेटा फेचिंग, नॉर्मलाइजेशन, ग्रीक्स और मैक्रो मेट्रिक्स 
+    एक ही बार में प्रोसेस करके UI के लिए तैयार करता है।
+    """
+    raw_df, live_spot = fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symbol)
+    if raw_df is None or raw_df.empty:
+        return pd.DataFrame(), {}
+        
+    cleaned_df = normalize_columns(raw_df)
+    processed_df = calculate_advanced_metrics(cleaned_df, live_spot, lot_size)
+    
+    total_call_oi = processed_df['Raw_CE_OI'].sum()
+    total_put_oi = processed_df['Raw_PE_OI'].sum()
+    pcr = round(total_put_oi / total_call_oi, 3) if total_call_oi > 0 else 0
+    
+    max_pain = calculate_max_pain(processed_df, live_spot)
+    
+    max_call_row = processed_df.loc[processed_df['Raw_CE_OI'].idxmax()] if not processed_df.empty else None
+    max_put_row = processed_df.loc[processed_df['Raw_PE_OI'].idxmax()] if not processed_df.empty else None
+    
+    resistance = int(max_call_row['Strike']) if max_call_row is not None else 0
+    support = int(max_put_row['Strike']) if max_put_row is not None else 0
+    
+    metrics = {
+        "live_spot": live_spot,
+        "pcr": pcr,
+        "max_pain": max_pain,
+        "resistance": resistance,
+        "support": support
+    }
+    
+    return processed_df, metrics
