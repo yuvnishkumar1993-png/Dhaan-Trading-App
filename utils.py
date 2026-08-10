@@ -186,10 +186,7 @@ def calculate_advanced_metrics(df, spot, lot):
     return df
 
 def get_fully_processed_data(client_id, access_token, sec_id, seg, expiry, symbol, lot_size):
-    """
-    मास्टर फंक्शन: डेटा फेचिंग, नॉर्मलाइजेशन, ग्रीक्स और मैक्रो मेट्रिक्स 
-    एक ही बार में प्रोसेस करके UI के लिए तैयार करता है।
-    """
+    """मास्टर फंक्शन: डेटा फेचिंग, नॉर्मलाइजेशन और ग्रीक्स कैलकुलेशन"""
     raw_df, live_spot = fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symbol)
     if raw_df is None or raw_df.empty:
         return pd.DataFrame(), {}
