@@ -89,7 +89,6 @@ strike_col = next((c for c in chain_df.columns if 'STRIKE' in str(c).upper() or 
 chain_df['Strike'] = pd.to_numeric(chain_df[strike_col], errors='coerce')
 chain_df.dropna(subset=['Strike'], inplace=True)
 
-# Explicit and robust column detection for Call/Put OI and Volume
 ce_oi_col = next((c for c in chain_df.columns if ('CE' in str(c).upper() or 'CALL' in str(c).upper()) and 'OI' in str(c).upper() and 'CHG' not in str(c).upper()), None)
 pe_oi_col = next((c for c in chain_df.columns if ('PE' in str(c).upper() or 'PUT' in str(c).upper()) and 'OI' in str(c).upper() and 'CHG' not in str(c).upper()), None)
 
@@ -109,15 +108,12 @@ chain_df['PE_IV'] = pd.to_numeric(chain_df[pe_iv_col], errors='coerce').fillna(1
 # ALWAYS SORT ASCENDING BY STRIKE
 chain_df = chain_df.sort_values('Strike', ascending=True).reset_index(drop=True)
 
-# Filter ±12 strikes around spot for clean display
-chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
-idx = chain_df['Dist'].idxmin()
-disp_df = chain_df.iloc[max(0, idx-12):min(len(chain_df), idx+13)].copy()
-disp_df = disp_df.sort_values('Strike', ascending=True).reset_index(drop=True)
+# NO AGGRESSIVE FILTERING: Use all loaded chain strikes so bars never disappear
+disp_df = chain_df.copy()
 
 strike_str_list = [str(int(s)) for s in disp_df['Strike']]
 
-# --- CALCULATE QUANT METRICS (MAX PAIN & SIGMA BANDS) ---
+# --- CALCULATE QUANT METRICS ---
 def calculate_max_pain(df, spot):
     strikes, ce_oi, pe_oi = df['Strike'].values, df['Raw_CE_OI'].values, df['Raw_PE_OI'].values
     min_payout, max_pain_strike = float('inf'), strikes[0]
@@ -128,17 +124,14 @@ def calculate_max_pain(df, spot):
 
 max_pain_val = calculate_max_pain(chain_df, live_spot)
 
-# Expected Move / Sigma Calculation based on ATM IV
+chain_df['Dist'] = abs(chain_df['Strike'] - live_spot)
 atm_row = chain_df.loc[chain_df['Dist'].idxmin()]
 atm_iv = (atm_row.get('CE_IV', 13.0) + atm_row.get('PE_IV', 13.5)) / 2.0 / 100.0
 days_to_exp = 3.0 / 365.0
 sigma_1 = live_spot * atm_iv * math.sqrt(days_to_exp)
-sigma_2 = sigma_1 * 2.0
 
 upper_1sig, lower_1sig = live_spot + sigma_1, live_spot - sigma_1
-upper_2sig, lower_2sig = live_spot + sigma_2, live_spot - sigma_2
 
-# Total Volume Totals
 total_call_vol = int(disp_df['CE_Volume'].sum())
 total_put_vol = int(disp_df['PE_Volume'].sum())
 total_call_oi = int(disp_df['Raw_CE_OI'].sum())
@@ -158,12 +151,11 @@ st.markdown("---")
 closest_spot_strike = str(int(min(disp_df['Strike'], key=lambda x: abs(x - live_spot))))
 closest_pain_strike = str(int(min(disp_df['Strike'], key=lambda x: abs(x - max_pain_val))))
 
-# --- PLOTLY CHART FOR MOD A WITH SAFE SHAPES ---
+# --- PLOTLY CHART ---
 fig = go.Figure()
 fig.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_CE_OI'], name='CE OI (Resistance)', marker_color='#ef4444'))
 fig.add_trace(go.Bar(x=strike_str_list, y=disp_df['Raw_PE_OI'], name='PE OI (Support)', marker_color='#22c55e'))
 
-# Safely add vertical indicator lines using shapes and annotations
 fig.add_shape(type="line", x0=closest_spot_strike, x1=closest_spot_strike, y0=0, y1=1, yref="paper", line=dict(color="#38bdf8", dash="dash", width=2))
 fig.add_annotation(x=closest_spot_strike, y=1, yref="paper", text=f"Spot: {live_spot:.1f}", showarrow=False, yanchor="bottom", font=dict(color="#38bdf8", size=10))
 
@@ -178,7 +170,7 @@ fig.update_layout(
     hovermode="x unified",
     margin=dict(l=15, r=15, t=35, b=15),
     legend=dict(orientation="h", y=1.12, x=0, font=dict(size=10)),
-    height=380,
+    height=400,
     barmode="group",
     xaxis=dict(type='category', tickangle=-30, title="Strike Price"),
     yaxis=dict(title="Open Interest")
