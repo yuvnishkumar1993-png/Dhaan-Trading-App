@@ -3,7 +3,7 @@ import sys
 import streamlit as st
 import pandas as pd
 import numpy as np
-import scipy.stats as si
+import math
 from datetime import datetime
 
 # Page Configuration
@@ -21,7 +21,6 @@ if ROOT_DIR not in sys.path:
 try:
     from dhan_api import InstitutionalDataEngine
 except ImportError:
-    # Fallback Engine यदि इम्पोर्ट में दिक्कत हो
     class InstitutionalDataEngine:
         @staticmethod
         def load_scrip_master():
@@ -42,7 +41,7 @@ except ImportError:
                 })
             return pd.DataFrame(recs), spot
 
-# Professional Styling Injection (Terminal Grade UI & Sticky Headers)
+# Professional Styling Injection
 st.markdown("""
 <style>
     .main { background-color: #0e1117; color: #f8fafc; }
@@ -63,7 +62,6 @@ st.markdown("""
 st.markdown("## ⚡ Institutional Quant Terminal Pro")
 st.markdown("---")
 
-# --- COMPACT INLINE CONTROLS & TICKER BAR ---
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
@@ -144,6 +142,13 @@ if "Raw_CE_OI" not in chain_df.columns and "CE_OI" in chain_df.columns:
     chain_df["Raw_CE_OI"] = chain_df["CE_OI"]
     chain_df["Raw_PE_OI"] = chain_df["PE_OI"]
 
+# Math Helper functions for Normal CDF and PDF (Replacing SciPy)
+def norm_cdf(x):
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+def norm_pdf(x):
+    return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
+
 # Comprehensive Advanced Metrics Calculation Engine
 def calculate_advanced_metrics(df, spot, lot):
     r = 0.06 
@@ -171,21 +176,21 @@ def calculate_advanced_metrics(df, spot, lot):
         sigma = (c_iv + p_iv) / 2.0
         
         try:
-            d1 = (np.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-            d2 = d1 - sigma * np.sqrt(T)
-            cdf_d1 = si.norm.cdf(d1)
-            pdf_d1 = si.norm.pdf(d1)
+            d1 = (math.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+            d2 = d1 - sigma * math.sqrt(T)
+            cdf_d1 = norm_cdf(d1)
+            pdf_d1 = norm_pdf(d1)
             
             c_delta = round(cdf_d1, 2)
             p_delta = round(cdf_d1 - 1.0, 2)
-            gamma = round(pdf_d1 / (spot * sigma * np.sqrt(T)), 5)
+            gamma = round(pdf_d1 / (spot * sigma * math.sqrt(T)), 5)
             
-            c_theta = round((- (spot * pdf_d1 * sigma) / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * si.norm.cdf(d2)) / 365.0, 2)
-            p_theta = round((- (spot * pdf_d1 * sigma) / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * si.norm.cdf(-d2)) / 365.0, 2)
-            vega = round((spot * np.sqrt(T) * pdf_d1) / 100.0, 2)
+            c_theta = round((- (spot * pdf_d1 * sigma) / (2 * math.sqrt(T)) - r * K * math.exp(-r * T) * norm_cdf(d2)) / 365.0, 2)
+            p_theta = round((- (spot * pdf_d1 * sigma) / (2 * math.sqrt(T)) + r * K * math.exp(-r * T) * norm_cdf(-d2)) / 365.0, 2)
+            vega = round((spot * math.sqrt(T) * pdf_d1) / 100.0, 2)
             
             vanna = round(-pdf_d1 * d2 / sigma, 4)
-            charm = round(-pdf_d1 * (2 * r * T - d2 * sigma * np.sqrt(T)) / (2 * T * sigma * np.sqrt(T)) / 365.0, 4)
+            charm = round(-pdf_d1 * (2 * r * T - d2 * sigma * math.sqrt(T)) / (2 * T * sigma * math.sqrt(T)) / 365.0, 4)
         except Exception:
             c_delta, p_delta, gamma, c_theta, p_theta, vega, vanna, charm = 0.5, -0.5, 0.001, -5.0, -5.0, 10.0, 0.01, -0.01
 
