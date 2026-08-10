@@ -98,7 +98,7 @@ with col_c1:
     selected_symbol = st.selectbox("📌 Asset", popular_symbols, index=current_idx, key="page_asset_sel")
     st.session_state.global_symbol = selected_symbol
 
-# Standard Exchange Lot Size Map (Fixed & Accurate: SENSEX = 20)
+# Standard Exchange Lot Size & ID Map (Fixed & Accurate: SENSEX = 51 / BSE_IDX / Lot 20)
 fallback_map = {
     "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 65},
     "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 30},
@@ -112,8 +112,8 @@ fallback_map = {
 cfg = fallback_map.get(selected_symbol.upper(), {"sec_id": 13, "seg": "IDX_I", "lot": 65})
 sec_id, seg, auto_lot_size = cfg["sec_id"], cfg["seg"], cfg["lot"]
 
-# मास्टर CSV से केवल Security ID और Segment लेंगे, Lot Size फिक्स रहेगा ताकि गलत वैल्यु न आए
-if not master_df.empty and symbol_col:
+# इंडेक्स के लिए मास्टर CSV से ओवरराइट रोक दिया गया है ताकि SENSEX की सही ID (51) सुरक्षित रहे
+if selected_symbol.upper() not in ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"] and not master_df.empty and symbol_col:
     match_row = master_df[master_df[symbol_col] == selected_symbol.upper()]
     if not match_row.empty:
         seg_col = next((c for c in ['SEM_EXCH_SEGMENT', 'EXCH_SEGMENT', 'SEGMENT'] if c in match_row.columns), None)
@@ -121,9 +121,9 @@ if not master_df.empty and symbol_col:
         
         target_row = match_row.iloc[0]
         if seg_col:
-            idx_row = match_row[match_row[seg_col].isin(['IDX_I', 'BSE_IDX', 'NSE_EQ'])]
-            if not idx_row.empty:
-                target_row = idx_row.iloc[0]
+            eq_row = match_row[match_row[seg_col] == 'NSE_EQ']
+            if not eq_row.empty:
+                target_row = eq_row.iloc[0]
                 
         if id_col:
             sec_id = int(target_row.get(id_col, sec_id))
@@ -328,7 +328,7 @@ st.markdown("---")
 m1, m2, m3, m4 = st.columns(4)
 with m1: st.metric("Underlying Asset", selected_symbol)
 with m2: st.metric("Live Spot Price", f"₹{live_spot:,.2f}")
-with m3: st.metric("Lot Size", auto_lot_size)  # यहाँ नाम साफ-सुथरा 'Lot Size' कर दिया गया है
+with m3: st.metric("Lot Size", auto_lot_size)
 with m4: st.metric("Put-Call Ratio (PCR)", pcr_val)
 st.markdown("---")
 
