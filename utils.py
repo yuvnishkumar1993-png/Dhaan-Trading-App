@@ -98,3 +98,80 @@ def get_buildup(chg_oi, pct_chg):
     elif pct_chg < 0 and chg_oi < 0: return "Long Unwind"
     elif pct_chg > 0 and chg_oi < 0: return "Short Cover"
     return "Long Build"
+import pandas as pd
+import numpy as np
+
+def calculate_max_pain(df_chain):
+    """
+    ऑप्शन चेन डेटा के आधार पर Max Pain स्ट्राइक प्राइस की गणना करता है।
+    """
+    if df_chain.empty or 'StrikePrice' not in df_chain.columns:
+        return None
+    
+    strikes = df_chain['StrikePrice'].values
+    ce_oi = df_chain['CE_OpenInterest'].values if 'CE_OpenInterest' in df_chain.columns else np.zeros(len(strikes))
+    pe_oi = df_chain['PE_OpenInterest'].values if 'PE_OpenInterest' in df_chain.columns else np.zeros(len(strikes))
+    
+    total_pain = []
+    
+    for expiry_strike in strikes:
+        pain = 0
+        for i, strike in enumerate(strikes):
+            # Call writers' loss if market expires at expiry_strike
+            if expiry_strike > strike:
+                pain += (expiry_strike - strike) * ce_oi[i]
+            # Put writers' loss if market expires at expiry_strike
+            if expiry_strike < strike:
+                pain += (strike - expiry_strike) * pe_oi[i]
+        total_pain.append(pain)
+        
+    min_pain_index = np.argmin(total_pain)
+    return strikes[min_pain_index]
+
+
+def detect_oi_spurt(df_chain, threshold=100000):
+    """
+    ओपन इंटरेस्ट (OI) में अचानक आए उछाल (Spurt) या अनवाइंडिंग को डिटेक्ट करता है।
+    """
+    if df_chain.empty:
+        return pd.DataFrame()
+    
+    # यदि डेटा में Change in OI का कॉलम है, तो उसका उपयोग करें
+    if 'Change_in_OI' in df_chain.columns:
+        spurt_df = df_chain[abs(df_chain['Change_in_OI']) >= threshold]
+        return spurt_df
+    
+    return pd.DataFrame()
+
+
+def calculate_strategy_payoff(strategy_name, strike_1, strike_2, premium_1, premium_2, spot_range):
+    """
+    विभिन्न ऑप्शन रणनीतियों (जैसे Bull Call Spread, Straddle) के लिए Payoff (Profit/Loss) कैलकुलेट करता है।
+    """
+    payoffs = []
+    
+    for spot in spot_range:
+        pnl = 0
+        if strategy_name == "Bull Call Spread":
+            # Long Lower Strike CE, Short Higher Strike CE
+            long_ce_pnl = max(0, spot - strike_1) - premium_1
+            short_ce_pnl = premium_2 - max(0, spot - strike_2)
+            pnl = (long_ce_pnl + short_ce_pnl) * 50  # Lot size multiplier (e.g., Nifty 50)
+            
+        elif strategy_name == "Long Straddle":
+            # Buy ATM CE and Buy ATM PE
+            ce_pnl = max(0, spot - strike_1) - premium_1
+            pe_pnl = max(0, strike_1 - spot) - premium_2
+            pnl = (ce_pnl + pe_pnl) * 50
+            
+        payoffs.append(pnl)
+        
+    return pd.DataFrame({'SpotPrice': spot_range, 'PnL': payoffs})
+
+
+def get_multi_expiry_matrix():
+    """
+    मल्टी-एक्सपायरी डेटा स्ट्रक्चर को मैनेज करने के लिए डमी/लाइव स्ट्रक्चर।
+    """
+    expiries = ["Current Weekly", "Next Weekly", "Current Monthly"]
+    return expiries
