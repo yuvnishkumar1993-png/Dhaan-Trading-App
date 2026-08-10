@@ -77,7 +77,20 @@ def get_master_df():
 
 master_df = get_master_df()
 
-# --- 1. CONTROLS PANEL (Segment, Scrip, Expiry, Range, Greeks) ---
+# Load Exact Lot Size from reference CSV file
+@st.cache_data(ttl=3600)
+def get_lot_size_df():
+    try:
+        csv_path = os.path.join(ROOT_DIR, 'Dhan - Nse Fno Lot Size (1).csv')
+        if not os.path.exists(csv_path):
+            csv_path = 'Dhan - Nse Fno Lot Size (1).csv'
+        return pd.read_csv(csv_path)
+    except Exception:
+        return pd.DataFrame()
+
+lot_df = get_lot_size_df()
+
+# --- 1. CONTROLS PANEL ---
 col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns([1.5, 1.8, 1.8, 2, 1.5])
 
 with col_c1:
@@ -94,9 +107,9 @@ with col_c2:
     if not master_df.empty and seg_col and sym_col:
         try:
             if asset_type == "Indices":
-                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['IDX_I', 'BSE_IDX'])]
+                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['IDX_I', 'BSE_IDX', 'BSE_FO', 'NSE_FO'])]
             else:
-                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['NSE_EQ', 'BSE_EQ'])]
+                sub_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['NSE_FO', 'BSE_FO', 'NSE_EQ'])]
             available_symbols = sub_df[sym_col].dropna().unique().tolist()
         except:
             available_symbols = []
@@ -108,31 +121,36 @@ with col_c2:
     selected_symbol = st.selectbox("🔍 Scrip Selector", available_symbols, index=current_idx, key="term_scrip_sel")
     st.session_state.global_symbol = selected_symbol
 
-# Auto-detect Security ID, Segment, and Lot Size
-sec_id, seg, auto_lot_size = 13, "IDX_I", 25
-fallback_map = {
-    "NIFTY": {"sec_id": 13, "seg": "IDX_I", "lot": 25},
-    "BANKNIFTY": {"sec_id": 25, "seg": "IDX_I", "lot": 15},
-    "FINNIFTY": {"sec_id": 27, "seg": "IDX_I", "lot": 25},
-    "SENSEX": {"sec_id": 51, "seg": "BSE_IDX", "lot": 10},
-    "MIDCPNIFTY": {"sec_id": 28, "seg": "IDX_I", "lot": 50},
-    "RELIANCE": {"sec_id": 2885, "seg": "NSE_EQ", "lot": 250},
-    "TCS": {"sec_id": 11536, "seg": "NSE_EQ", "lot": 175},
-    "SBIN": {"sec_id": 3045, "seg": "NSE_EQ", "lot": 750}
-}
-cfg = fallback_map.get(selected_symbol.upper(), {"sec_id": 13, "seg": "IDX_I", "lot": 25})
-sec_id, seg, auto_lot_size = cfg["sec_id"], cfg["seg"], cfg["lot"]
+# --- 2. EXACT LOT SIZE AUTO-DETECTION FROM UPLOADED CSV & FALLBACK ---
+def fetch_exact_lot(symbol):
+    sym_upper = symbol.upper()
+    if not lot_df.empty and 'Symbol' in lot_df.columns and 'Lot Size (Aug 2026)' in lot_df.columns:
+        match = lot_df[lot_df['Symbol'].str.upper() == sym_upper]
+        if not match.empty:
+            return int(match.iloc[0]['Lot Size (Aug 2026)'])
+    
+    # Fallback map for indices like SENSEX or others
+    fallback_lot_map = {
+        "NIFTY": 65,
+        "BANKNIFTY": 30,
+        "FINNIFTY": 60,
+        "SENSEX": 10,
+        "MIDCPNIFTY": 120,
+        "RELIANCE": 500,
+        "TCS": 175,
+        "SBIN": 750
+    }
+    return fallback_lot_map.get(sym_upper, 25)
 
+auto_lot_size = fetch_exact_lot(selected_symbol)
+
+sec_id, seg = 13, "IDX_I"
 if not master_df.empty and sym_col:
     match_row = master_df[master_df[sym_col] == selected_symbol.upper()]
     if not match_row.empty:
         id_col = next((c for c in ['SEM_SMST_SECURITY_ID', 'SECURITY_ID', 'SEM_SECURITY_ID'] if c in match_row.columns), None)
-        lot_col = next((c for c in ['SEM_LOT_UNITS', 'LOT_SIZE', 'LOT_UNITS'] if c in match_row.columns), None)
         if id_col: sec_id = int(match_row.iloc[0].get(id_col, sec_id))
         if seg_col: seg = str(match_row.iloc[0].get(seg_col, seg))
-        if lot_col:
-            v_lot = match_row.iloc[0].get(lot_col, auto_lot_size)
-            if pd.notnull(v_lot) and int(v_lot) > 0: auto_lot_size = int(v_lot)
 
 try:
     expiries = InstitutionalDataEngine.fetch_expiries(client_id, access_token, sec_id, seg)
@@ -155,10 +173,9 @@ with col_c5:
     show_greeks = st.checkbox("Show Greeks", value=True, key="term_greeks")
 
 
-# --- 2. AUTOMATIC 5-MINUTE REFRESH ENGINE (`st.fragment`) ---
-@st.fragment(run_every=300) # हर 5 मिनट पर ऑटो-रिफ्रेश
+# --- 3. AUTOMATIC 5-MINUTE REFRESH ENGINE (`st.fragment`) ---
+@st.fragment(run_every=300) # Auto-refreshes every 5 minutes in background
 def render_institutional_terminal():
-    # Fetch Live Data or Fallback Simulation Safely
     try:
         chain_df, live_spot = InstitutionalDataEngine.fetch_live_option_chain(
             client_id, access_token, sec_id, seg, selected_expiry, selected_symbol
@@ -172,8 +189,8 @@ def render_institutional_terminal():
             live_spot = 51500.00
             strikes = np.arange(50500, 52500, 100)
         elif "SENSEX" in sym_upper:
-            live_spot = 81000.00
-            strikes = np.arange(80000, 82000, 100)
+            live_spot = 73525.00
+            strikes = np.arange(72000, 75000, 100)
         elif "FINNIFTY" in sym_upper:
             live_spot = 23500.00
             strikes = np.arange(22500, 24500, 50)
@@ -289,7 +306,7 @@ def render_institutional_terminal():
     pcr_val = round(f_pe_oi / f_ce_oi, 2) if f_ce_oi > 0 else 0.85
     total_net_gex = round(disp_df['CE GEX (Cr)'].sum() + disp_df['PE GEX (Cr)'].sum(), 2)
 
-    # Dashboard Metrics Bar
+    # Dashboard Metrics Bar (Displaying exact auto-detected lot size from uploaded reference table)
     st.markdown("---")
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1: st.metric("📌 Asset", selected_symbol)
@@ -300,7 +317,6 @@ def render_institutional_terminal():
     with m6: st.metric("⏱️ Updated", datetime.now().strftime("%H:%M:%S"))
     st.markdown("---")
 
-    # Buildup helper
     def get_buildup(chg_oi, pct_chg):
         if pct_chg > 0 and chg_oi > 0: return "Short Build"
         elif pct_chg < 0 and chg_oi < 0: return "Long Unwind"
@@ -326,7 +342,6 @@ def render_institutional_terminal():
     disp_df['CE Spread %'] = np.where(disp_df['CE_LTP'] > 0, round(((disp_df['CE Ask'] - disp_df['CE Bid']) / disp_df['CE_LTP']) * 100, 2), 0.0)
     disp_df['PE Spread %'] = np.where(disp_df['PE_LTP'] > 0, round(((disp_df['PE Ask'] - disp_df['PE Bid']) / disp_df['PE_LTP']) * 100, 2), 0.0)
 
-    # Matrix Layout Selection
     if show_greeks:
         matrix_cols = [
             "CE Build", "CE GEX (Cr)", "CE Charm", "CE Vanna", "CE Vega", "CE Theta", "Gamma", "CE Delta",
@@ -357,7 +372,6 @@ def render_institutional_terminal():
     matrix_df = disp_df[final_cols].copy()
     matrix_df = matrix_df.loc[:, ~matrix_df.columns.duplicated()]
 
-    # Professional Styling Function (Hang-free Optimization)
     atm_strike_val = round(live_spot / 50) * 50
 
     def professional_terminal_styling(row):
@@ -381,5 +395,4 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=600, hide_index=True)
 
-# Run the live fragment terminal
 render_institutional_terminal()
