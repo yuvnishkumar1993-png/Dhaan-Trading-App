@@ -11,11 +11,9 @@ def norm_pdf(x):
 def get_option_chain_data():
     """
     Dhan API या फॉलबैक से ऑप्शन चेन डेटा फेच करता है। 
-    यदि लाइव डेटा उपलब्ध नहीं है या मार्केट बंद है, तो यह टेस्टिंग के लिएफ सेफ डमी डेटा रिटर्न करता है।
+    यदि लाइव डेटा उपलब्ध नहीं है या मार्केट बंद है, तो यह टेस्टिंग के लिए सेफ डमी डेटा रिटर्न करता है।
     """
     try:
-        # यहाँ आप अपने धन एपीआई (dhan_api.py) के असली कॉल को जोड़ सकते हैं
-        # फिलहाल ऐप क्रैश न हो, इसके लिए मजबूत स्ट्रक्चर वाला डेटा:
         data = {
             'StrikePrice': [24300, 24350, 24400, 24450, 24500, 24550, 24600, 24650, 24700],
             'CE_OpenInterest': [150000, 230000, 500000, 800000, 1200000, 900000, 600000, 300000, 100000],
@@ -29,7 +27,6 @@ def get_option_chain_data():
             'PE_IV': [14.0, 13.7, 13.5, 13.2, 13.0, 13.3, 13.6, 14.1, 14.6]
         }
         df = pd.DataFrame(data)
-        # बैकवर्ड कंपैटिबिलिटी के लिए 'Strike' कॉलम भी जोड़ देते हैं
         df['Strike'] = df['StrikePrice']
         df['Raw_CE_OI'] = df['CE_OpenInterest']
         df['Raw_PE_OI'] = df['PE_OpenInterest']
@@ -67,40 +64,6 @@ def calculate_max_pain(df, spot=0):
             max_pain_strike = exp_price
             
     return int(max_pain_strike)
-
-def detect_oi_spurt(df_chain, threshold=100000):
-    if df_chain is None or df_chain.empty:
-        return pd.DataFrame()
-    if 'Change_in_OI' in df_chain.columns:
-        return df_chain[abs(df_chain['Change_in_OI']) >= threshold]
-    return pd.DataFrame()
-
-def calculate_strategy_payoff(strategy_name, strike_1, strike_2, premium_1, premium_2, spot_range):
-    payoffs = []
-    for spot in spot_range:
-        pnl = 0
-        if strategy_name == "Bull Call Spread":
-            long_ce_pnl = max(0, spot - strike_1) - premium_1
-            short_ce_pnl = premium_2 - max(0, spot - strike_2)
-            pnl = (long_ce_pnl + short_ce_pnl) * 50
-        elif strategy_name == "Long Straddle":
-            ce_pnl = max(0, spot - strike_1) - premium_1
-            pe_pnl = max(0, strike_1 - spot) - premium_2
-            pnl = (ce_pnl + pe_pnl) * 50
-        payoffs.append(pnl)
-    return pd.DataFrame({'SpotPrice': spot_range, 'PnL': payoffs})
-
-def get_multi_expiry_matrix():
-    return ["Current Weekly", "Next Weekly", "Current Monthly"]
-
-def get_buildup(chg_oi, pct_chg):
-    if pct_chg > 0 and chg_oi > 0: 
-        return "Short Build"
-    elif pct_chg < 0 and chg_oi < 0: 
-        return "Long Unwind"
-    elif pct_chg > 0 and chg_oi < 0: 
-        return "Short Cover"
-    return "Long Build"
 
 def calculate_advanced_metrics(df, spot, lot):
     if df is None or df.empty or ('Strike' not in df.columns and 'StrikePrice' not in df.columns): 
