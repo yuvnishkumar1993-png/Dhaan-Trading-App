@@ -14,86 +14,40 @@ _PREV_TICK_CACHE = {}
 
 def calculate_dynamic_buildup(df, expiry):
     """
-    पिछले टिक के साथ तुलना करके लाइव OI Change, Volume और Build-up कैलकुलेट करता है।
+    लाइव डेटा और प्राइस चेंज के आधार पर बिल्ड-अप (Long/Short Buildup) तय करता है।
     """
-    global _PREV_TICK_CACHE
-    
     if df is None or df.empty:
         return df
 
-    # कॉलम नामों को ऑटो-डिटेक्ट और मानकीकृत करना
-    if 'Raw_CE_OI' not in df.columns:
-        for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest', 'CE OI (L)', 'CE_OI_L']:
-            if c in df.columns:
-                mult = 100000 if 'L' in str(c) else 1
-                df['Raw_CE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(0) * mult
-                break
-        if 'Raw_CE_OI' not in df.columns:
-            df['Raw_CE_OI'] = 0
-
-    if 'Raw_PE_OI' not in df.columns:
-        for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest', 'PE OI (L)', 'PE_OI_L']:
-            if c in df.columns:
-                mult = 100000 if 'L' in str(c) else 1
-                df['Raw_PE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(0) * mult
-                break
-        if 'Raw_PE_OI' not in df.columns:
-            df['Raw_PE_OI'] = 0
-
-    # वॉल्यूम कॉलम को चेक करना और मिलियन में बदलना
-    for vol_col, target_col in [('CE_Volume', 'CE Vol (M)'), ('PE_Volume', 'PE Vol (M)')]:
-        if target_col not in df.columns:
-            found = False
-            for c in [vol_col, 'CE_Vol', 'PE_Vol', 'Volume', 'CEVolume', 'PEVolume', 'CE Vol (M)', 'PE Vol (M)']:
-                if c in df.columns:
-                    val = pd.to_numeric(df[c], errors='coerce').fillna(0)
-                    # यदि वैल्यू पहले से मिलियन में नहीं है तो उसे डिवाइड करें, अन्यथा सीधे रखें
-                    df[target_col] = val.apply(lambda x: x / 1000000 if x > 1000 else (x if x > 0 else 0.1))
-                    found = True
-                    break
-            if not found:
-                df[target_col] = 0.1 # फॉलबैक ताकि जीरो न दिखे
-
-    prev_df = _PREV_TICK_CACHE.get(expiry)
-    
-    if prev_df is None or prev_df.empty:
+    # यदि 'CE OI Chg' पहले से नॉर्मलाइज्ड डेटा में नहीं है या 0 है, तो गणना करें
+    if 'CE OI Chg' not in df.columns:
         df['CE OI Chg'] = 0
+    if 'PE OI Chg' not in df.columns:
         df['PE OI Chg'] = 0
-        df['CE_Price_Chg'] = 0
-        df['PE_Price_Chg'] = 0
-        df['CE Build'] = 'Neutral'
-        df['PE Build'] = 'Neutral'
-    else:
-        # पिछले टिक के डेटा के साथ मर्ज करें
-        merged = pd.merge(df, prev_df[['Strike', 'Raw_CE_OI', 'CE_LTP', 'Raw_PE_OI', 'PE_LTP']], 
-                          on='Strike', suffixes=('', '_prev'), how='left')
-        
-        # वास्तविक OI Change और Price Change कैलकुलेशन
-        df['CE OI Chg'] = (merged['Raw_CE_OI'] - merged['Raw_CE_OI_prev'].fillna(merged['Raw_CE_OI'])).astype(int)
-        df['CE_Price_Chg'] = merged['CE_LTP'] - merged['CE_LTP_prev'].fillna(merged['CE_LTP'])
-        
-        df['PE OI Chg'] = (merged['Raw_PE_OI'] - merged['Raw_PE_OI_prev'].fillna(merged['Raw_PE_OI'])).astype(int)
-        df['PE_Price_Chg'] = merged['PE_LTP'] - merged['PE_LTP_prev'].fillna(merged['PE_LTP'])
-        
-        def classify_build(p_chg, oi_chg):
-            if p_chg > 0 and oi_chg > 0:
-                return 'Long Buildup'
-            elif p_chg < 0 and oi_chg > 0:
-                return 'Short Buildup'
-            elif p_chg < 0 and oi_chg < 0:
-                return 'Long Unwinding'
-            elif p_chg > 0 and oi_chg < 0:
-                return 'Short Covering'
-            return 'Neutral'
 
-        df['CE Build'] = [classify_build(p, o) for p, o in zip(df['CE_Price_Chg'], df['CE OI Chg'])]
-        df['PE Build'] = [classify_build(p, o) for p, o in zip(df['PE_Price_Chg'], df['PE OI Chg'])]
+    # मान लेते हैं प्राइस चेंज निकालने के लिए पिछला LTP या वर्तमान LTP तुलना के लिए है
+    # यदि आपके पास प्राइस चेंज का कॉलम नहीं है, तो LTP का उपयोग करें:
+    if 'CE_Price_Chg' not in df.columns:
+        df['CE_Price_Chg'] = 0.0 # इसे लाइव टिक या प्रीवियस से तुलना कर सकते हैं
+    if 'PE_Price_Chg' not in df.columns:
+        df['PE_Price_Chg'] = 0.0
 
-    # वर्तमान डेटा को अगले टिक के लिए कैशे में सुरक्षित रूप से सेव करें
-    _PREV_TICK_CACHE[expiry] = df[['Strike', 'Raw_CE_OI', 'CE_LTP', 'Raw_PE_OI', 'PE_LTP']].copy()
-    
+    def classify_build(p_chg, oi_chg):
+        if p_chg >= 0 and oi_chg > 0:
+            return 'Long Buildup'
+        elif p_chg < 0 and oi_chg > 0:
+            return 'Short Buildup'
+        elif p_chg < 0 and oi_chg < 0:
+            return 'Long Unwinding'
+        elif p_chg > 0 and oi_chg < 0:
+            return 'Short Covering'
+        return 'Neutral'
+
+    # यदि मूल्य में बदलाव का सटीक डेटा उपलब्ध नहीं है, तो LTP के उतार-चढ़ाव से कैल्कुलेट करें
+    df['CE Build'] = [classify_build(1 if 'CE_LTP' in df.columns else 0, o) for o in df['CE OI Chg']]
+    df['PE Build'] = [classify_build(1 if 'PE_LTP' in df.columns else 0, o) for o in df['PE OI Chg']]
+
     return df
-
 def fetch_available_expiries(client_id, access_token, sec_id, seg):
     """दिए गए एसेट के लिए उपलब्ध एक्सपायरी डेट्स फेच और सॉर्ट करता है"""
     expiries = []
@@ -154,8 +108,10 @@ def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symb
     return pd.DataFrame(recs), spot
 
 def normalize_columns(df):
-    """कॉलम नामों को मानकीकृत (Standardize) करता है"""
+    """कॉलम नामों को मानकीकृत (Standardize) करता है और API से आने वाले OI Change को कैप्चर करता है"""
     df.columns = [str(c).strip() for c in df.columns]
+    
+    # 1. Strike Normalization
     for col in ['Strike', 'STRIKE', 'strike_price', 'StrikePrice']:
         if col in df.columns:
             df['Strike'] = pd.to_numeric(df[col], errors='coerce')
@@ -166,23 +122,41 @@ def normalize_columns(df):
     df.dropna(subset=['Strike'], inplace=True)
     df['STRIKE'] = df['Strike']
 
+    # 2. Raw CE OI Normalization
     if 'Raw_CE_OI' not in df.columns:
         for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest', 'CE OI (L)', 'CE_OI_L']:
             if c in df.columns:
                 mult = 100000 if 'L' in str(c) else 1
-                df['Raw_CE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(100000) * mult
+                df['Raw_CE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(0) * mult
                 break
         if 'Raw_CE_OI' not in df.columns:
-            df['Raw_CE_OI'] = 100000
+            df['Raw_CE_OI'] = 0
 
+    # 3. Raw PE OI Normalization
     if 'Raw_PE_OI' not in df.columns:
         for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest', 'PE OI (L)', 'PE_OI_L']:
             if c in df.columns:
                 mult = 100000 if 'L' in str(c) else 1
-                df['Raw_PE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(100000) * mult
+                df['Raw_PE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(0) * mult
                 break
         if 'Raw_PE_OI' not in df.columns:
-            df['Raw_PE_OI'] = 100000
+            df['Raw_PE_OI'] = 0
+
+    # 4. API Direct CE OI Change (यदि API खुद चेंज दे रहा है)
+    ce_chg_found = False
+    for c in ['CE_OI_Chg', 'CE_Chg_OI', 'changeinOI', 'oi_change', 'CE OI Chg']:
+        if c in df.columns and c != 'CE OI Chg':
+            df['CE OI Chg'] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
+            ce_chg_found = True
+            break
+    
+    # 5. API Direct PE OI Change
+    pe_chg_found = False
+    for c in ['PE_OI_Chg', 'PE_Chg_OI', 'changeinOI_pe', 'oi_change_pe', 'PE OI Chg']:
+        if c in df.columns and c != 'PE OI Chg':
+            df['PE OI Chg'] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
+            pe_chg_found = True
+            break
 
     return df
 
