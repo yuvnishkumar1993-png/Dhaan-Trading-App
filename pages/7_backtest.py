@@ -441,7 +441,7 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-# --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
+    # --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
     if HAS_PLOTLY:
         st.markdown("### 📈 Institutional Open Interest & Sigma Volatility Distribution Chart")
         
@@ -460,38 +460,35 @@ def render_institutional_terminal():
             days_to_exp = 3.0
         T_years = days_to_exp / 365.0
         
-        iv_decimal = atm_iv / 100.0 if atm_iv > 0 else 0.14
-        sigma_move = live_spot * iv_decimal * math.sqrt(T_years)
+        iv_dec = atm_iv / 100.0 if 'atm_iv' in locals() and atm_iv > 0 else 0.14
+        sig_move = live_spot * iv_dec * math.sqrt(T_years)
         
-        sigma_1_low = live_spot - sigma_move
-        sigma_1_high = live_spot + sigma_move
-        sigma_2_low = live_spot - 2 * sigma_move
-        sigma_2_high = live_spot + 2 * sigma_move
+        sig_1_low = live_spot - sig_move
+        sig_1_high = live_spot + sig_move
+        sig_2_low = live_spot - 2 * sig_move
+        sig_2_high = live_spot + 2 * sig_move
 
-        x_smooth = np.linspace(chart_df_plot['Strike'].min(), chart_df_plot['Strike'].max(), 300)
-        pdf_y = (1 / (sigma_move * math.sqrt(2 * math.pi))) * np.exp(-0.5 * ((x_smooth - live_spot) / sigma_move) ** 2)
-        max_oi = max(chart_df_plot['CE_OI_L'].max(), chart_df_plot['PE_OI_L'].max())
-        pdf_scaled = pdf_y * (max_oi / pdf_y.max()) if pdf_y.max() > 0 else pdf_y
+        x_vals = np.linspace(chart_df_plot['Strike'].min(), chart_df_plot['Strike'].max(), 300)
+        p_y = (1 / (sig_move * math.sqrt(2 * math.pi))) * np.exp(-0.5 * ((x_vals - live_spot) / sig_move) ** 2)
+        mx_oi = max(chart_df_plot['CE_OI_L'].max(), chart_df_plot['PE_OI_L'].max())
+        p_scaled = p_y * (mx_oi / p_y.max()) if p_y.max() > 0 else p_y
 
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
-        # ±2 Sigma Zone (Outer Band - 95% Probability)
         fig.add_vrect(
-            x0=sigma_2_low, x1=sigma_2_high,
+            x0=sig_2_low, x1=sig_2_high,
             fillcolor="#38bdf8", opacity=0.04,
             layer="below", line_width=0,
             annotation_text="±2σ Zone (95%)", annotation_position="top left"
         )
 
-        # ±1 Sigma Zone (Inner Band - 68% Probability)
         fig.add_vrect(
-            x0=sigma_1_low, x1=sigma_1_high,
+            x0=sig_1_low, x1=sig_1_high,
             fillcolor="#38bdf8", opacity=0.10,
             layer="below", line_width=0,
             annotation_text="±1σ Zone (68%)", annotation_position="top left"
         )
 
-        # Call OI Bars
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike'], 
             y=chart_df_plot['CE_OI_L'], 
@@ -500,7 +497,6 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x}<br>Call OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
         
-        # Put OI Bars
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike'], 
             y=chart_df_plot['PE_OI_L'], 
@@ -509,17 +505,15 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x}<br>Put OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
 
-        # Implied Sigma Distribution Curve
         fig.add_trace(go.Scatter(
-            x=x_smooth,
-            y=pdf_scaled,
+            x=x_vals,
+            y=p_scaled,
             mode='lines',
             name='Implied Sigma Curve',
             line=dict(color='#38bdf8', width=3),
             hovertemplate='Strike: %{x}<br>Prob Density: %{y:.2f}<extra></extra>'
         ), secondary_y=True)
         
-        # Live Spot Price Line
         fig.add_vline(
             x=live_spot, 
             line_dash="dash", 
@@ -528,7 +522,6 @@ def render_institutional_terminal():
             annotation_position="top left"
         )
         
-        # Max Pain Line
         fig.add_vline(
             x=max_pain_val, 
             line_dash="dot", 
@@ -554,3 +547,5 @@ def render_institutional_terminal():
         fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
         
         st.plotly_chart(fig, use_container_width=True)
+
+render_institutional_terminal()
