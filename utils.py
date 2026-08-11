@@ -259,14 +259,26 @@ def get_fully_processed_data(client_id, access_token, sec_id, seg, expiry, symbo
     # **डायनेमिक बिल्ड-अप और OI Change कैलकुलेशन**
     processed_df = calculate_dynamic_buildup(processed_df, expiry)
     
-    total_call_oi = processed_df['Raw_CE_OI'].sum()
-    total_put_oi = processed_df['Raw_PE_OI'].sum()
+    # **वॉल्यूम को मिलियन (M) में सुरक्षित रूप से कन्वर्ट करें**
+    if 'CE_Volume' in processed_df.columns:
+        processed_df['CE Vol (M)'] = processed_df['CE_Volume'] / 1000000
+    else:
+        processed_df['CE Vol (M)'] = processed_df.get('CE Vol (M)', 0.1)
+        
+    if 'PE_Volume' in processed_df.columns:
+        processed_df['PE Vol (M)'] = processed_df['PE_Volume'] / 1000000
+    else:
+        processed_df['PE Vol (M)'] = processed_df.get('PE Vol (M)', 0.1)
+
+    total_call_oi = processed_df['Raw_CE_OI'].sum() if 'Raw_CE_OI' in processed_df.columns else 0
+    total_put_oi = processed_df['Raw_PE_OI'].sum() if 'Raw_PE_OI' in processed_df.columns else 0
     pcr = round(total_put_oi / total_call_oi, 3) if total_call_oi > 0 else 0
     
     max_pain = calculate_max_pain(processed_df, live_spot)
     
-    max_call_row = processed_df.loc[processed_df['Raw_CE_OI'].idxmax()] if not processed_df.empty else None
-    max_put_row = processed_df.loc[processed_df['Raw_PE_OI'].idxmax()] if not processed_df.empty else None
+    # **रेजिस्टेंस और सपोर्ट निकालने के लिए सही रो (Row) फेचिंग लॉजिक**
+    max_call_row = processed_df.loc[processed_df['Raw_CE_OI'].idxmax()] if not processed_df.empty and 'Raw_CE_OI' in processed_df.columns else None
+    max_put_row = processed_df.loc[processed_df['Raw_PE_OI'].idxmax()] if not processed_df.empty and 'Raw_PE_OI' in processed_df.columns else None
     
     resistance = int(max_call_row['Strike']) if max_call_row is not None else 0
     support = int(max_put_row['Strike']) if max_put_row is not None else 0
