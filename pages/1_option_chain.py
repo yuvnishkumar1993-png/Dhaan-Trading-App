@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 try:
     import plotly.express as px
     import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
     HAS_PLOTLY = True
 except ImportError:
     HAS_PLOTLY = False
@@ -215,22 +216,12 @@ def render_institutional_terminal():
         chain_df['PE_LTP'] = chain_df['Put_LTP']
     elif 'PE_LTP' not in chain_df.columns: chain_df['PE_LTP'] = 10.0
 
-    # Robust Raw OI Extraction
-    if 'Raw_CE_OI' not in chain_df.columns:
-        for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest', 'CE OI (L)']:
-            if c in chain_df.columns:
-                chain_df['Raw_CE_OI'] = chain_df[c] * (100000 if 'L' in str(c) else 1)
-                break
-        if 'Raw_CE_OI' not in chain_df.columns: chain_df['Raw_CE_OI'] = 100000
+    if 'Raw_CE_OI' not in chain_df.columns: 
+        chain_df['Raw_CE_OI'] = chain_df.get('CE_OI', chain_df.get('Call_OI', 100000))
+    if 'Raw_PE_OI' not in chain_df.columns: 
+        chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
 
-    if 'Raw_PE_OI' not in chain_df.columns:
-        for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest', 'PE OI (L)']:
-            if c in chain_df.columns:
-                chain_df['Raw_PE_OI'] = chain_df[c] * (100000 if 'L' in str(c) else 1)
-                break
-        if 'Raw_PE_OI' not in chain_df.columns: chain_df['Raw_PE_OI'] = 100000
-
-    # --- SESSION STATE BASELINE CACHE FOR INTRA-DAY OI CHANGE (Safe NaN handling) ---
+    # --- SESSION STATE BASELINE CACHE FOR INTRA-DAY OI CHANGE ---
     if "baseline_oi_store" not in st.session_state:
         st.session_state.baseline_oi_store = {}
 
@@ -386,10 +377,13 @@ def render_institutional_terminal():
     disp_df['PE OI (L)'] = round(disp_df['Raw_PE_OI'] / 100000, 2)
     disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', 100000) / 1000000, 2)
     disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', 100000) / 1000000, 2)
-    disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', 0)
-    disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', 0)
-    disp_df['CE OI Chg %'] = disp_df.get('CE_%Chg', 0.0)
-    disp_df['PE OI Chg %'] = disp_df.get('PE_%Chg', 0.0)
+    
+    # --- OI Change और Percentage Map ---
+    disp_df['CE OI Chg'] = pd.to_numeric(disp_df.get('CE_Chg_OI', 0), errors='coerce').fillna(0).astype(int)
+    disp_df['PE OI Chg'] = pd.to_numeric(disp_df.get('PE_Chg_OI', 0), errors='coerce').fillna(0).astype(int)
+    disp_df['CE OI Chg %'] = pd.to_numeric(disp_df.get('CE_%Chg', 0.0), errors='coerce').fillna(0.0).round(2)
+    disp_df['PE OI Chg %'] = pd.to_numeric(disp_df.get('PE_%Chg', 0.0), errors='coerce').fillna(0.0).round(2)
+
     disp_df['CE Bid'] = round(disp_df['CE_LTP'] * 0.99, 2)
     disp_df['CE Ask'] = round(disp_df['CE_LTP'] * 1.01, 2)
     disp_df['PE Bid'] = round(disp_df['PE_LTP'] * 0.99, 2)
@@ -450,44 +444,100 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-    # --- 4. PROFESSIONAL INSTITUTIONAL OI DISTRIBUTION CHART (Plotly) ---
+    # --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
     if HAS_PLOTLY:
-        st.markdown("### 📈 Institutional Open Interest (OI) Distribution Chart")
+        st.markdown("### 📈 Institutional Open Interest & Sigma Volatility Distribution Chart")
         
         atm_idx = (chain_df['Strike'] - live_spot).abs().idxmin()
-        chart_start = max(0, atm_idx - 12)
-        chart_end = min(len(chain_df), atm_idx + 13)
+        chart_start = max(0, atm_idx - 15)
+        chart_end = min(len(chain_df), atm_idx + 16)
         chart_df_plot = chain_df.iloc[chart_start:chart_end].copy()
         
+        chart_df_plot['Strike_Str'] = chart_df_plot['Strike'].astype(int).astype(str)
         chart_df_plot['CE_OI_L'] = chart_df_plot['Raw_CE_OI'] / 100000
         chart_df_plot['PE_OI_L'] = chart_df_plot['Raw_PE_OI'] / 100000
         
-        fig = go.Figure()
+        try:
+            exp_dt = datetime.strptime(selected_expiry, "%Y-%m-%d")
+            days_to_exp = max(0.01, (exp_dt - datetime.now()).total_seconds() / (24 * 3600))
+        except:
+            days_to_exp = 3.0
+        T_years = days_to_exp / 365.0
         
+        iv_dec = atm_iv / 100.0 if 'atm_iv' in locals() and atm_iv > 0 else 0.14
+        sig_move = live_spot * iv_dec * math.sqrt(T_years)
+        
+        sig_1_low = live_spot - sig_move
+        sig_1_high = live_spot + sig_move
+        sig_2_low = live_spot - 2 * sig_move
+        sig_2_high = live_spot + 2 * sig_move
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        # ±2 Sigma Zone
+        fig.add_vrect(
+            x0=sig_2_low, x1=sig_2_high,
+            fillcolor="#38bdf8", opacity=0.04,
+            layer="below", line_width=0,
+            annotation_text="±2σ Zone (95%)", annotation_position="top left"
+        )
+
+        # ±1 Sigma Zone
+        fig.add_vrect(
+            x0=sig_1_low, x1=sig_1_high,
+            fillcolor="#38bdf8", opacity=0.12,
+            layer="below", line_width=0,
+            annotation_text="±1σ Zone (68%)", annotation_position="top left"
+        )
+
         fig.add_trace(go.Bar(
-            x=chart_df_plot['Strike'], 
+            x=chart_df_plot['Strike_Str'], 
             y=chart_df_plot['CE_OI_L'], 
             name='Call OI (Resistance)', 
             marker_color='#ef4444',
             hovertemplate='Strike: %{x}<br>Call OI: %{y:.2f} Lakhs<extra></extra>'
-        ))
+        ), secondary_y=False)
         
         fig.add_trace(go.Bar(
-            x=chart_df_plot['Strike'], 
+            x=chart_df_plot['Strike_Str'], 
             y=chart_df_plot['PE_OI_L'], 
             name='Put OI (Support)', 
             marker_color='#22c55e',
             hovertemplate='Strike: %{x}<br>Put OI: %{y:.2f} Lakhs<extra></extra>'
-        ))
+        ), secondary_y=False)
+
+        x_smooth = np.linspace(chart_df_plot['Strike'].min(), chart_df_plot['Strike'].max(), 300)
+        p_y = (1 / (sig_move * math.sqrt(2 * math.pi))) * np.exp(-0.5 * ((x_smooth - live_spot) / sig_move) ** 2)
+        mx_oi = max(chart_df_plot['CE_OI_L'].max(), chart_df_plot['PE_OI_L'].max()) if not chart_df_plot.empty else 100
+        p_scaled = p_y * (mx_oi / p_y.max()) if p_y.max() > 0 else p_y
+
+        fig.add_trace(go.Scatter(
+            x=x_smooth,
+            y=p_scaled,
+            mode='lines',
+            name='Implied Sigma Curve',
+            line=dict(color='#38bdf8', width=3),
+            hovertemplate='Strike: %{x:.0f}<br>Prob Density: %{y:.2f}<extra></extra>'
+        ), secondary_y=True)
         
+        spot_rounded = int(round(live_spot / 50) * 50)
         fig.add_vline(
-            x=live_spot, 
+            x=spot_rounded, 
             line_dash="dash", 
             line_color="#f59e0b", 
             annotation_text=f"Spot: ₹{live_spot:,.2f}", 
             annotation_position="top left"
         )
         
+        max_pain_rounded = int(round(max_pain_val / 50) * 50)
+        fig.add_vline(
+            x=max_pain_rounded, 
+            line_dash="dot", 
+            line_color="#a855f7", 
+            annotation_text=f"Max Pain: {max_pain_val}", 
+            annotation_position="top right"
+        )
+
         fig.update_layout(
             barmode='group',
             plot_bgcolor='#0e1117',
@@ -500,9 +550,15 @@ def render_institutional_terminal():
             hovermode="x unified"
         )
         
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
+        fig.update_yaxes(title_text="Open Interest (Lakhs)", secondary_y=False, showgrid=True, gridcolor='#21262d')
+        fig.update_yaxes(title_text="Probability Density", secondary_y=True, showgrid=False)
+        fig.update_xaxes(
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor='#21262d',
+            tickangle=-45
+        )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
 render_institutional_terminal()
