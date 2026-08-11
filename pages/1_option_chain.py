@@ -221,35 +221,39 @@ def render_institutional_terminal():
     if 'Raw_PE_OI' not in chain_df.columns: 
         chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
 
-    # --- SESSION STATE BASELINE CACHE FOR INTRA-DAY OI CHANGE ---
+   # --- ROBUST MULTI-ASSET SESSION STATE BASELINE CACHE FOR OI CHANGE ---
     if "baseline_oi_store" not in st.session_state:
         st.session_state.baseline_oi_store = {}
 
-    exp_key = f"{selected_symbol}_{selected_expiry}"
+    # हर सिंबल और एक्सपायरी के लिए यूनिक की बनाएँ ताकि बैंकनिफ्टी, सेंसेक्स और निफ्टी का डेटा आपस में न उलझे
+    exp_key = f"{selected_symbol.upper()}_{selected_expiry}"
 
     chain_df['Raw_CE_OI'] = pd.to_numeric(chain_df['Raw_CE_OI'], errors='coerce').fillna(0)
     chain_df['Raw_PE_OI'] = pd.to_numeric(chain_df['Raw_PE_OI'], errors='coerce').fillna(0)
 
+    # यदि इस सिंबल/एक्सपायरी का बेसलाइन स्टोर नहीं है, या सिंबल बदल गया है, तो नया बेसलाइन सेट करें
     if exp_key not in st.session_state.baseline_oi_store or st.session_state.baseline_oi_store[exp_key].empty:
         st.session_state.baseline_oi_store[exp_key] = chain_df[['Strike', 'Raw_CE_OI', 'Raw_PE_OI']].copy()
 
     base_df = st.session_state.baseline_oi_store[exp_key]
+    
+    # स्ट्राइक के आधार पर मर्ज करें
     merged_df = pd.merge(chain_df, base_df, on='Strike', suffixes=('', '_base'), how='left')
 
+    # यदि किसी नए स्ट्राइक पर बेसलाइन डेटा नहीं मिला, तो वर्तमान ओआई को ही बेस मान लें (ताकि 0 या NaN न आए)
     ce_current = pd.to_numeric(merged_df['Raw_CE_OI'], errors='coerce').fillna(0)
     ce_base = pd.to_numeric(merged_df['Raw_CE_OI_base'], errors='coerce').fillna(ce_current)
-    chain_df['CE_Chg_OI'] = (ce_current - ce_base).fillna(0).astype(int)
+    chain_df['CE_Chg_OI'] = (ce_current - ce_base).astype(int)
 
     pe_current = pd.to_numeric(merged_df['Raw_PE_OI'], errors='coerce').fillna(0)
     pe_base = pd.to_numeric(merged_df['Raw_PE_OI_base'], errors='coerce').fillna(pe_current)
-    chain_df['PE_Chg_OI'] = (pe_current - pe_base).fillna(0).astype(int)
+    chain_df['PE_Chg_OI'] = (pe_current - pe_base).astype(int)
 
-    ce_base_safe = pd.to_numeric(merged_df['Raw_CE_OI_base'], errors='coerce').fillna(0)
-    pe_base_safe = pd.to_numeric(merged_df['Raw_PE_OI_base'], errors='coerce').fillna(0)
+    ce_base_safe = ce_base.replace(0, 1) # Division by zero रोकने के लिए
+    pe_base_safe = pe_base.replace(0, 1)
 
-    chain_df['CE_%Chg'] = np.where(ce_base_safe > 0, (chain_df['CE_Chg_OI'] / ce_base_safe * 100).round(2), 0.0)
-    chain_df['PE_%Chg'] = np.where(pe_base_safe > 0, (chain_df['PE_Chg_OI'] / pe_base_safe * 100).round(2), 0.0)
-
+    chain_df['CE_%Chg'] = (chain_df['CE_Chg_OI'] / ce_base_safe * 100).round(2)
+    chain_df['PE_%Chg'] = (chain_df['PE_Chg_OI'] / pe_base_safe * 100).round(2)
     # --- ADVANCED QUANT ANALYTICS (Max Pain & Key Levels) ---
     def calculate_max_pain(df, spot):
         strikes = df['Strike'].values
