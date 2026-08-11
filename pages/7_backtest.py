@@ -471,7 +471,6 @@ def render_institutional_terminal():
 
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
-        # Call OI Bars
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike_Str'], 
             y=chart_df_plot['CE_OI_L'], 
@@ -480,7 +479,6 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x}<br>Call OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
         
-        # Put OI Bars
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike_Str'], 
             y=chart_df_plot['PE_OI_L'], 
@@ -489,14 +487,11 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x}<br>Put OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
 
-        # Implied Sigma Curve
         x_smooth = np.linspace(chart_df_plot['Strike'].min(), chart_df_plot['Strike'].max(), 300)
         p_y = (1 / (sig_move * math.sqrt(2 * math.pi))) * np.exp(-0.5 * ((x_smooth - live_spot) / sig_move) ** 2)
         mx_oi = max(chart_df_plot['CE_OI_L'].max(), chart_df_plot['PE_OI_L'].max()) if not chart_df_plot.empty else 100
         p_scaled = p_y * (mx_oi / p_y.max()) if p_y.max() > 0 else p_y
 
-        # Match curve x-axis by rounding to nearest strike string or mapping
-        # For smooth scatter, let's use numeric x so line connects properly, but format x-axis ticks
         fig.add_trace(go.Scatter(
             x=x_smooth,
             y=p_scaled,
@@ -506,7 +501,6 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x:.0f}<br>Prob Density: %{y:.2f}<extra></extra>'
         ), secondary_y=True)
         
-        # Spot Line
         spot_rounded = int(round(live_spot / 50) * 50)
         fig.add_vline(
             x=spot_rounded, 
@@ -516,7 +510,6 @@ def render_institutional_terminal():
             annotation_position="top left"
         )
         
-        # Max Pain Line
         max_pain_rounded = int(round(max_pain_val / 50) * 50)
         fig.add_vline(
             x=max_pain_rounded, 
