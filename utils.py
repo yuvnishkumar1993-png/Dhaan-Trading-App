@@ -9,7 +9,7 @@ def norm_cdf(x):
 def norm_pdf(x): 
     return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
-# पिछले टिक के डेटा को स्टोर करने के लिए कैशे डिक्शनरी
+# पिछले टिक के डेटा को स्टोर करने के लिए ग्लोबल कैशे डिक्शनरी
 _PREV_TICK_CACHE = {}
 
 def calculate_dynamic_buildup(df, expiry):
@@ -21,27 +21,35 @@ def calculate_dynamic_buildup(df, expiry):
     if df is None or df.empty:
         return df
 
+    # कॉलम नामों को मानकीकृत करना
+    if 'Raw_CE_OI' not in df.columns and 'CE OI (L)' in df.columns:
+        df['Raw_CE_OI'] = df['CE OI (L)'] * 100000  # लाख से एब्सोल्यूट वैल्यू
+    if 'Raw_PE_OI' not in df.columns and 'PE OI (L)' in df.columns:
+        df['Raw_PE_OI'] = df['PE OI (L)'] * 100000
+
+    # सुनिश्चित करें कि LTP कॉलम मौजूद हैं
+    if 'CE_LTP' not in df.columns and 'CE_LTP' in df.columns:
+        pass
+
     prev_df = _PREV_TICK_CACHE.get(expiry)
     
-    # यदि पिछला डेटा नहीं है (पहला रन), तो डिफॉल्ट वैल्यू सेट करें
     if prev_df is None or prev_df.empty:
-        df['CE_OI_Chg'] = 0
-        df['PE_OI_Chg'] = 0
+        df['CE OI Chg'] = 0
+        df['PE OI Chg'] = 0
         df['CE_Price_Chg'] = 0
         df['PE_Price_Chg'] = 0
-        df['CE_Build'] = 'Neutral'
-        df['PE_Build'] = 'Neutral'
+        df['CE Build'] = 'Neutral'
+        df['PE Build'] = 'Neutral'
     else:
-        # स्ट्राइक के आधार पर पिछले डेटा से मर्ज करें
+        # पिछले टिक के डेटा के साथ स्ट्राइक के आधार पर मर्ज करें
         merged = pd.merge(df, prev_df[['Strike', 'Raw_CE_OI', 'CE_LTP', 'Raw_PE_OI', 'PE_LTP']], 
                           on='Strike', suffixes=('', '_prev'), how='left')
         
-        # CE कैलकुलेशन
-        df['CE_OI_Chg'] = merged['Raw_CE_OI'] - merged['Raw_CE_OI_prev'].fillna(merged['Raw_CE_OI'])
+        # वास्तविक OI Change और Price Change कैलकुलेशन
+        df['CE OI Chg'] = (merged['Raw_CE_OI'] - merged['Raw_CE_OI_prev'].fillna(merged['Raw_CE_OI'])).astype(int)
         df['CE_Price_Chg'] = merged['CE_LTP'] - merged['CE_LTP_prev'].fillna(merged['CE_LTP'])
         
-        # PE कैलकुलेशन
-        df['PE_OI_Chg'] = merged['Raw_PE_OI'] - merged['Raw_PE_OI_prev'].fillna(merged['Raw_PE_OI'])
+        df['PE OI Chg'] = (merged['Raw_PE_OI'] - merged['Raw_PE_OI_prev'].fillna(merged['Raw_PE_OI'])).astype(int)
         df['PE_Price_Chg'] = merged['PE_LTP'] - merged['PE_LTP_prev'].fillna(merged['PE_LTP'])
         
         def classify_build(p_chg, oi_chg):
@@ -55,10 +63,10 @@ def calculate_dynamic_buildup(df, expiry):
                 return 'Short Covering'
             return 'Neutral'
 
-        df['CE_Build'] = [classify_build(p, o) for p, o in zip(df['CE_Price_Chg'], df['CE_OI_Chg'])]
-        df['PE_Build'] = [classify_build(p, o) for p, o in zip(df['PE_Price_Chg'], df['PE_OI_Chg'])]
+        df['CE Build'] = [classify_build(p, o) for p, o in zip(df['CE_Price_Chg'], df['CE OI Chg'])]
+        df['PE Build'] = [classify_build(p, o) for p, o in zip(df['PE_Price_Chg'], df['PE OI Chg'])]
 
-    # वर्तमान डेटा को अगले टिक के लिए कैशे में सेव करें
+    # वर्तमान डेटा को अगले टिक के लिए कैशे में सुरक्षित रूप से सेव करें
     _PREV_TICK_CACHE[expiry] = df[['Strike', 'Raw_CE_OI', 'CE_LTP', 'Raw_PE_OI', 'PE_LTP']].copy()
     
     return df
@@ -225,8 +233,8 @@ def calculate_advanced_metrics(df, spot, lot):
         raw_pe_oi = float(row.get('Raw_PE_OI', 0) or 0)
         ce_vol = float(row.get('CE_Volume', 0) or 0)
         pe_vol = float(row.get('PE_Volume', 0) or 0)
-        ce_ltp = float(row.get('CE_LTP', 0) or 0)
-        pe_ltp = float(row.get('PE_LTP', 0) or 0)
+        ce_ltp = float(row.get('CE_LTP', 0) / 1.0 if 'CE_LTP' in row else 0)
+        pe_ltp = float(row.get('PE_LTP', 0) / 1.0 if 'PE_LTP' in row else 0)
         
         res['CE GEX (Cr)'].append(round(raw_ce_oi * lot * (spot**2) * gam / 10**8, 2))
         res['PE GEX (Cr)'].append(round(raw_pe_oi * lot * (spot**2) * gam / 10**8, 2))
