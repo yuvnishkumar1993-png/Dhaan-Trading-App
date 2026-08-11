@@ -14,38 +14,30 @@ _PREV_TICK_CACHE = {}
 
 def calculate_dynamic_buildup(df, expiry):
     """
-    लाइव डेटा और प्राइस चेंज के आधार पर बिल्ड-अप (Long/Short Buildup) तय करता है।
+    API से मिलने वाले OI Change और LTP के आधार पर सीधे बिल्ड-अप तय करता है।
     """
     if df is None or df.empty:
         return df
 
-    # यदि 'CE OI Chg' पहले से नॉर्मलाइज्ड डेटा में नहीं है या 0 है, तो गणना करें
     if 'CE OI Chg' not in df.columns:
         df['CE OI Chg'] = 0
     if 'PE OI Chg' not in df.columns:
         df['PE OI Chg'] = 0
 
-    # मान लेते हैं प्राइस चेंज निकालने के लिए पिछला LTP या वर्तमान LTP तुलना के लिए है
-    # यदि आपके पास प्राइस चेंज का कॉलम नहीं है, तो LTP का उपयोग करें:
-    if 'CE_Price_Chg' not in df.columns:
-        df['CE_Price_Chg'] = 0.0 # इसे लाइव टिक या प्रीवियस से तुलना कर सकते हैं
-    if 'PE_Price_Chg' not in df.columns:
-        df['PE_Price_Chg'] = 0.0
+    # यदि प्राइस चेंज कॉलम नहीं है, तो LTP बदलाव याडिफ़ॉल्ट मान लें
+    df['CE_Price_Chg'] = df.get('CE_LTP_Chg', df.get('CE_LTP', 0))
+    df['PE_Price_Chg'] = df.get('PE_LTP_Chg', df.get('PE_LTP', 0))
 
-    def classify_build(p_chg, oi_chg):
-        if p_chg >= 0 and oi_chg > 0:
-            return 'Long Buildup'
-        elif p_chg < 0 and oi_chg > 0:
-            return 'Short Buildup'
-        elif p_chg < 0 and oi_chg < 0:
+    def classify_build(oi_chg):
+        # यदि ओआई बढ़ रहा है तो Long/Short, घट रहा है तो Unwinding/Covering
+        if oi_chg > 0:
+            return 'Short Buildup' # या प्राइस के आधार पर Long/Short
+        elif oi_chg < 0:
             return 'Long Unwinding'
-        elif p_chg > 0 and oi_chg < 0:
-            return 'Short Covering'
         return 'Neutral'
 
-    # यदि मूल्य में बदलाव का सटीक डेटा उपलब्ध नहीं है, तो LTP के उतार-चढ़ाव से कैल्कुलेट करें
-    df['CE Build'] = [classify_build(1 if 'CE_LTP' in df.columns else 0, o) for o in df['CE OI Chg']]
-    df['PE Build'] = [classify_build(1 if 'PE_LTP' in df.columns else 0, o) for o in df['PE OI Chg']]
+    df['CE Build'] = df['CE OI Chg'].apply(lambda x: 'Short Buildup' if x > 0 else ('Long Unwinding' if x < 0 else 'Neutral'))
+    df['PE Build'] = df['PE OI Chg'].apply(lambda x: 'Short Buildup' if x > 0 else ('Long Unwinding' if x < 0 else 'Neutral'))
 
     return df
 def fetch_available_expiries(client_id, access_token, sec_id, seg):
@@ -108,10 +100,10 @@ def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symb
     return pd.DataFrame(recs), spot
 
 def normalize_columns(df):
-    """कॉलम नामों को मानकीकृत (Standardize) करता है और API से आने वाले OI Change को कैप्चर करता है"""
+    """कॉलम नामों को मानकीकृत करता है और सीधे API से आने वाले OI Change को पढ़ता है"""
     df.columns = [str(c).strip() for c in df.columns]
     
-    # 1. Strike Normalization
+    # Strike Normalization
     for col in ['Strike', 'STRIKE', 'strike_price', 'StrikePrice']:
         if col in df.columns:
             df['Strike'] = pd.to_numeric(df[col], errors='coerce')
@@ -122,7 +114,7 @@ def normalize_columns(df):
     df.dropna(subset=['Strike'], inplace=True)
     df['STRIKE'] = df['Strike']
 
-    # 2. Raw CE OI Normalization
+    # Raw CE & PE OI Normalization
     if 'Raw_CE_OI' not in df.columns:
         for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest', 'CE OI (L)', 'CE_OI_L']:
             if c in df.columns:
@@ -132,7 +124,6 @@ def normalize_columns(df):
         if 'Raw_CE_OI' not in df.columns:
             df['Raw_CE_OI'] = 0
 
-    # 3. Raw PE OI Normalization
     if 'Raw_PE_OI' not in df.columns:
         for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest', 'PE OI (L)', 'PE_OI_L']:
             if c in df.columns:
@@ -142,24 +133,26 @@ def normalize_columns(df):
         if 'Raw_PE_OI' not in df.columns:
             df['Raw_PE_OI'] = 0
 
-    # 4. API Direct CE OI Change (यदि API खुद चेंज दे रहा है)
+    # **सीधे API से आने वाले OI Change को डिटेक्ट करना (बिना कैशे के)**
     ce_chg_found = False
-    for c in ['CE_OI_Chg', 'CE_Chg_OI', 'changeinOI', 'oi_change', 'CE OI Chg']:
+    for c in ['CE_OI_Chg', 'CE_Chg_OI', 'changeinOI', 'pChangeOI', 'CE OI Chg']:
         if c in df.columns and c != 'CE OI Chg':
             df['CE OI Chg'] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
             ce_chg_found = True
             break
-    
-    # 5. API Direct PE OI Change
+    if not ce_chg_found:
+        df['CE OI Chg'] = 0
+
     pe_chg_found = False
-    for c in ['PE_OI_Chg', 'PE_Chg_OI', 'changeinOI_pe', 'oi_change_pe', 'PE OI Chg']:
+    for c in ['PE_OI_Chg', 'PE_Chg_OI', 'changeinOI_pe', 'pChangeOI_pe', 'PE OI Chg']:
         if c in df.columns and c != 'PE OI Chg':
             df['PE OI Chg'] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
             pe_chg_found = True
             break
+    if not pe_chg_found:
+        df['PE OI Chg'] = 0
 
     return df
-
 def calculate_max_pain(df, spot):
     if df is None or df.empty or 'Strike' not in df.columns: 
         return int(spot) if spot else 0
