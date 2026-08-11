@@ -215,10 +215,20 @@ def render_institutional_terminal():
         chain_df['PE_LTP'] = chain_df['Put_LTP']
     elif 'PE_LTP' not in chain_df.columns: chain_df['PE_LTP'] = 10.0
 
-    if 'Raw_CE_OI' not in chain_df.columns: 
-        chain_df['Raw_CE_OI'] = chain_df.get('CE_OI', chain_df.get('Call_OI', 100000))
-    if 'Raw_PE_OI' not in chain_df.columns: 
-        chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
+    # Robust Raw OI Extraction
+    if 'Raw_CE_OI' not in chain_df.columns:
+        for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest', 'CE OI (L)']:
+            if c in chain_df.columns:
+                chain_df['Raw_CE_OI'] = chain_df[c] * (100000 if 'L' in str(c) else 1)
+                break
+        if 'Raw_CE_OI' not in chain_df.columns: chain_df['Raw_CE_OI'] = 100000
+
+    if 'Raw_PE_OI' not in chain_df.columns:
+        for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest', 'PE OI (L)']:
+            if c in chain_df.columns:
+                chain_df['Raw_PE_OI'] = chain_df[c] * (100000 if 'L' in str(c) else 1)
+                break
+        if 'Raw_PE_OI' not in chain_df.columns: chain_df['Raw_PE_OI'] = 100000
 
     # --- SESSION STATE BASELINE CACHE FOR INTRA-DAY OI CHANGE (Safe NaN handling) ---
     if "baseline_oi_store" not in st.session_state:
@@ -440,41 +450,36 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-  # --- 4. PROFESSIONAL INSTITUTIONAL OI DISTRIBUTION CHART (Plotly) ---
+    # --- 4. PROFESSIONAL INSTITUTIONAL OI DISTRIBUTION CHART (Plotly) ---
     if HAS_PLOTLY:
         st.markdown("### 📈 Institutional Open Interest (OI) Distribution Chart")
         
-        # Spot Price के आस-पास (ATM के ±12 स्ट्राइक्स) का सटीक डेटा फ़िल्टर करें
         atm_idx = (chain_df['Strike'] - live_spot).abs().idxmin()
         chart_start = max(0, atm_idx - 12)
         chart_end = min(len(chain_df), atm_idx + 13)
-        chart_df = chain_df.iloc[chart_start:chart_end].copy()
+        chart_df_plot = chain_df.iloc[chart_start:chart_end].copy()
         
-        # OI को लाख (Lakhs) में कन्वर्ट करें ताकि चार्ट पर नंबर साफ दिखें
-        chart_df['CE_OI_L'] = chart_df['Raw_CE_OI'] / 100000
-        chart_df['PE_OI_L'] = chart_df['Raw_PE_OI'] / 100000
+        chart_df_plot['CE_OI_L'] = chart_df_plot['Raw_CE_OI'] / 100000
+        chart_df_plot['PE_OI_L'] = chart_df_plot['Raw_PE_OI'] / 100000
         
         fig = go.Figure()
         
-        # Call OI (Resistance - Red Bar)
         fig.add_trace(go.Bar(
-            x=chart_df['Strike'], 
-            y=chart_df['CE_OI_L'], 
+            x=chart_df_plot['Strike'], 
+            y=chart_df_plot['CE_OI_L'], 
             name='Call OI (Resistance)', 
             marker_color='#ef4444',
             hovertemplate='Strike: %{x}<br>Call OI: %{y:.2f} Lakhs<extra></extra>'
         ))
         
-        # Put OI (Support - Green Bar)
         fig.add_trace(go.Bar(
-            x=chart_df['Strike'], 
-            y=chart_df['PE_OI_L'], 
+            x=chart_df_plot['Strike'], 
+            y=chart_df_plot['PE_OI_L'], 
             name='Put OI (Support)', 
             marker_color='#22c55e',
             hovertemplate='Strike: %{x}<br>Put OI: %{y:.2f} Lakhs<extra></extra>'
         ))
         
-        # Live Spot Price की वर्टिकल लाइन जोड़ें
         fig.add_vline(
             x=live_spot, 
             line_dash="dash", 
@@ -499,3 +504,5 @@ def render_institutional_terminal():
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
         
         st.plotly_chart(fig, use_container_width=True)
+
+render_institutional_terminal()
