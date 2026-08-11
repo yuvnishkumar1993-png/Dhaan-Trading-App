@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 try:
     import plotly.express as px
     import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
     HAS_PLOTLY = True
 except ImportError:
     HAS_PLOTLY = False
@@ -215,22 +216,12 @@ def render_institutional_terminal():
         chain_df['PE_LTP'] = chain_df['Put_LTP']
     elif 'PE_LTP' not in chain_df.columns: chain_df['PE_LTP'] = 10.0
 
-    # Robust Raw OI Extraction
-    if 'Raw_CE_OI' not in chain_df.columns:
-        for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest', 'CE OI (L)']:
-            if c in chain_df.columns:
-                chain_df['Raw_CE_OI'] = chain_df[c] * (100000 if 'L' in str(c) else 1)
-                break
-        if 'Raw_CE_OI' not in chain_df.columns: chain_df['Raw_CE_OI'] = 100000
+    if 'Raw_CE_OI' not in chain_df.columns: 
+        chain_df['Raw_CE_OI'] = chain_df.get('CE_OI', chain_df.get('Call_OI', 100000))
+    if 'Raw_PE_OI' not in chain_df.columns: 
+        chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
 
-    if 'Raw_PE_OI' not in chain_df.columns:
-        for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest', 'PE OI (L)']:
-            if c in chain_df.columns:
-                chain_df['Raw_PE_OI'] = chain_df[c] * (100000 if 'L' in str(c) else 1)
-                break
-        if 'Raw_PE_OI' not in chain_df.columns: chain_df['Raw_PE_OI'] = 100000
-
-    # --- SESSION STATE BASELINE CACHE FOR INTRA-DAY OI CHANGE (Safe NaN handling) ---
+    # --- SESSION STATE BASELINE CACHE FOR INTRA-DAY OI CHANGE ---
     if "baseline_oi_store" not in st.session_state:
         st.session_state.baseline_oi_store = {}
 
@@ -450,23 +441,19 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-# --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
+    # --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
     if HAS_PLOTLY:
         st.markdown("### 📈 Institutional Open Interest & Sigma Volatility Distribution Chart")
         
-        # Spot Price के आस-पास (ATM के ±15 स्ट्राइक्स) का सटीक डेटा फ़िल्टर करें
         atm_idx = (chain_df['Strike'] - live_spot).abs().idxmin()
         chart_start = max(0, atm_idx - 15)
         chart_end = min(len(chain_df), atm_idx + 16)
         chart_df_plot = chain_df.iloc[chart_start:chart_end].copy()
         
-        # OI को लाख (Lakhs) में कन्वर्ट करें
         chart_df_plot['CE_OI_L'] = chart_df_plot['Raw_CE_OI'] / 100000
         chart_df_plot['PE_OI_L'] = chart_df_plot['Raw_PE_OI'] / 100000
         
-        # --- SIGMA & VOLATILITY CALCULATIONS ---
         try:
-            # Expiry तक का समय (Years में)
             exp_dt = datetime.strptime(selected_expiry, "%Y-%m-%d")
             days_to_exp = max(0.01, (exp_dt - datetime.now()).total_seconds() / (24 * 3600))
         except:
@@ -474,7 +461,6 @@ def render_institutional_terminal():
         T_years = days_to_exp / 365.0
         
         iv_decimal = atm_iv / 100.0 if atm_iv > 0 else 0.14
-        # Standard Deviation move in price scale ($\sigma = Spot \times IV \times \sqrt{T}$)
         sigma_move = live_spot * iv_decimal * math.sqrt(T_years)
         
         sigma_1_low = live_spot - sigma_move
@@ -482,19 +468,13 @@ def render_institutional_terminal():
         sigma_2_low = live_spot - 2 * sigma_move
         sigma_2_high = live_spot + 2 * sigma_move
 
-        # Secondary Y-Axis के लिए Normal Distribution Curve (Bell Curve) जनरेट करना
         x_smooth = np.linspace(chart_df_plot['Strike'].min(), chart_df_plot['Strike'].max(), 300)
-        # Probability Density Function (PDF)
         pdf_y = (1 / (sigma_move * math.sqrt(2 * math.pi))) * np.exp(-0.5 * ((x_smooth - live_spot) / sigma_move) ** 2)
-        # स्केल को बार्स के साथ मैच करने के लिए नॉर्मलाइज करें
         max_oi = max(chart_df_plot['CE_OI_L'].max(), chart_df_plot['PE_OI_L'].max())
         pdf_scaled = pdf_y * (max_oi / pdf_y.max()) if pdf_y.max() > 0 else pdf_y
 
-        # Subplots with Secondary Y-Axis
-        from plotly.subplots import make_subplots
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
-        # Call OI (Resistance - Red Bar)
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike'], 
             y=chart_df_plot['CE_OI_L'], 
@@ -503,7 +483,6 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x}<br>Call OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
         
-        # Put OI (Support - Green Bar)
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike'], 
             y=chart_df_plot['PE_OI_L'], 
@@ -512,17 +491,15 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x}<br>Put OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
 
-        # Sigma Distribution Probability Curve (Line)
         fig.add_trace(go.Scatter(
             x=x_smooth,
             y=pdf_scaled,
             mode='lines',
             name='Implied Sigma Curve',
-            line=dict(color='#38bdf8', width=3, dash='solid'),
+            line=dict(color='#38bdf8', width=3),
             hovertemplate='Strike: %{x}<br>Prob Density: %{y:.2f}<extra></extra>'
         ), secondary_y=True)
         
-        # --- ANNOTATIONS & KEY VERTICAL LINES ---
         # 1. Live Spot Price Line
         fig.add_vline(
             x=live_spot, 
@@ -541,7 +518,7 @@ def render_institutional_terminal():
             annotation_position="top right"
         )
 
-        # 3. 1-Sigma Bounds (+/- 1σ)
+        # 3. ±1 Sigma Zone
         fig.add_vrect(
             x0=sigma_1_low, x1=sigma_1_high,
             fillcolor="#38bdf8", opacity=0.08,
@@ -566,3 +543,5 @@ def render_institutional_terminal():
         fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
         
         st.plotly_chart(fig, use_container_width=True)
+
+render_institutional_terminal()
