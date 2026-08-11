@@ -441,7 +441,7 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-    # --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
+   # --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
     if HAS_PLOTLY:
         st.markdown("### 📈 Institutional Open Interest & Sigma Volatility Distribution Chart")
         
@@ -518,12 +518,12 @@ def render_institutional_terminal():
             annotation_position="top right"
         )
 
-        # 3. ±1 Sigma Zone
+        # 3. ±1 Sigma Zone (यहाँ 'top center' को 'top left' कर दिया गया है)
         fig.add_vrect(
             x0=sigma_1_low, x1=sigma_1_high,
             fillcolor="#38bdf8", opacity=0.08,
             layer="below", line_width=0,
-            annotation_text="±1σ Zone (68% Prob)", annotation_position="top center"
+            annotation_text="±1σ Zone (68% Prob)", annotation_position="top left"
         )
 
         fig.update_layout(
@@ -543,5 +543,3 @@ def render_institutional_terminal():
         fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
         
         st.plotly_chart(fig, use_container_width=True)
-
-render_institutional_terminal()
