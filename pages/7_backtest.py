@@ -377,10 +377,13 @@ def render_institutional_terminal():
     disp_df['PE OI (L)'] = round(disp_df['Raw_PE_OI'] / 100000, 2)
     disp_df['CE Vol (M)'] = round(disp_df.get('CE_Volume', 100000) / 1000000, 2)
     disp_df['PE Vol (M)'] = round(disp_df.get('PE_Volume', 100000) / 1000000, 2)
-    disp_df['CE OI Chg'] = disp_df.get('CE_Chg_OI', 0)
-    disp_df['PE OI Chg'] = disp_df.get('PE_Chg_OI', 0)
-    disp_df['CE OI Chg %'] = disp_df.get('CE_%Chg', 0.0)
-    disp_df['PE OI Chg %'] = disp_df.get('PE_%Chg', 0.0)
+    
+    # --- OI Change और Percentage Map ---
+    disp_df['CE OI Chg'] = pd.to_numeric(disp_df.get('CE_Chg_OI', 0), errors='coerce').fillna(0).astype(int)
+    disp_df['PE OI Chg'] = pd.to_numeric(disp_df.get('PE_Chg_OI', 0), errors='coerce').fillna(0).astype(int)
+    disp_df['CE OI Chg %'] = pd.to_numeric(disp_df.get('CE_%Chg', 0.0), errors='coerce').fillna(0.0).round(2)
+    disp_df['PE OI Chg %'] = pd.to_numeric(disp_df.get('PE_%Chg', 0.0), errors='coerce').fillna(0.0).round(2)
+
     disp_df['CE Bid'] = round(disp_df['CE_LTP'] * 0.99, 2)
     disp_df['CE Ask'] = round(disp_df['CE_LTP'] * 1.01, 2)
     disp_df['PE Bid'] = round(disp_df['PE_LTP'] * 0.99, 2)
@@ -464,13 +467,29 @@ def render_institutional_terminal():
         iv_dec = atm_iv / 100.0 if 'atm_iv' in locals() and atm_iv > 0 else 0.14
         sig_move = live_spot * iv_dec * math.sqrt(T_years)
         
-        sig_1_low = round(live_spot - sig_move, -1)
-        sig_1_high = round(live_spot + sig_move, -1)
-        sig_2_low = round(live_spot - 2 * sig_move, -1)
-        sig_2_high = round(live_spot + 2 * sig_move, -1)
+        sig_1_low = live_spot - sig_move
+        sig_1_high = live_spot + sig_move
+        sig_2_low = live_spot - 2 * sig_move
+        sig_2_high = live_spot + 2 * sig_move
 
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
+        # ±2 Sigma Zone
+        fig.add_vrect(
+            x0=sig_2_low, x1=sig_2_high,
+            fillcolor="#38bdf8", opacity=0.04,
+            layer="below", line_width=0,
+            annotation_text="±2σ Zone (95%)", annotation_position="top left"
+        )
+
+        # ±1 Sigma Zone
+        fig.add_vrect(
+            x0=sig_1_low, x1=sig_1_high,
+            fillcolor="#38bdf8", opacity=0.12,
+            layer="below", line_width=0,
+            annotation_text="±1σ Zone (68%)", annotation_position="top left"
+        )
+
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike_Str'], 
             y=chart_df_plot['CE_OI_L'], 
