@@ -9,6 +9,60 @@ def norm_cdf(x):
 def norm_pdf(x): 
     return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
 
+# पिछले टिक के डेटा को स्टोर करने के लिए कैशे डिक्शनरी
+_PREV_TICK_CACHE = {}
+
+def calculate_dynamic_buildup(df, expiry):
+    """
+    पिछले टिक के साथ तुलना करके लाइव OI Change और Build-up कैलकुलेट करता है।
+    """
+    global _PREV_TICK_CACHE
+    
+    if df is None or df.empty:
+        return df
+
+    prev_df = _PREV_TICK_CACHE.get(expiry)
+    
+    # यदि पिछला डेटा नहीं है (पहला रन), तो डिफॉल्ट वैल्यू सेट करें
+    if prev_df is None or prev_df.empty:
+        df['CE_OI_Chg'] = 0
+        df['PE_OI_Chg'] = 0
+        df['CE_Price_Chg'] = 0
+        df['PE_Price_Chg'] = 0
+        df['CE_Build'] = 'Neutral'
+        df['PE_Build'] = 'Neutral'
+    else:
+        # स्ट्राइक के आधार पर पिछले डेटा से मर्ज करें
+        merged = pd.merge(df, prev_df[['Strike', 'Raw_CE_OI', 'CE_LTP', 'Raw_PE_OI', 'PE_LTP']], 
+                          on='Strike', suffixes=('', '_prev'), how='left')
+        
+        # CE कैलकुलेशन
+        df['CE_OI_Chg'] = merged['Raw_CE_OI'] - merged['Raw_CE_OI_prev'].fillna(merged['Raw_CE_OI'])
+        df['CE_Price_Chg'] = merged['CE_LTP'] - merged['CE_LTP_prev'].fillna(merged['CE_LTP'])
+        
+        # PE कैलकुलेशन
+        df['PE_OI_Chg'] = merged['Raw_PE_OI'] - merged['Raw_PE_OI_prev'].fillna(merged['Raw_PE_OI'])
+        df['PE_Price_Chg'] = merged['PE_LTP'] - merged['PE_LTP_prev'].fillna(merged['PE_LTP'])
+        
+        def classify_build(p_chg, oi_chg):
+            if p_chg > 0 and oi_chg > 0:
+                return 'Long Buildup'
+            elif p_chg < 0 and oi_chg > 0:
+                return 'Short Buildup'
+            elif p_chg < 0 and oi_chg < 0:
+                return 'Long Unwinding'
+            elif p_chg > 0 and oi_chg < 0:
+                return 'Short Covering'
+            return 'Neutral'
+
+        df['CE_Build'] = [classify_build(p, o) for p, o in zip(df['CE_Price_Chg'], df['CE_OI_Chg'])]
+        df['PE_Build'] = [classify_build(p, o) for p, o in zip(df['PE_Price_Chg'], df['PE_OI_Chg'])]
+
+    # वर्तमान डेटा को अगले टिक के लिए कैशे में सेव करें
+    _PREV_TICK_CACHE[expiry] = df[['Strike', 'Raw_CE_OI', 'CE_LTP', 'Raw_PE_OI', 'PE_LTP']].copy()
+    
+    return df
+
 def fetch_available_expiries(client_id, access_token, sec_id, seg):
     """दिए गए एसेट के लिए उपलब्ध एक्सपायरी डेट्स फेच और सॉर्ट करता है"""
     expiries = []
@@ -186,13 +240,16 @@ def calculate_advanced_metrics(df, spot, lot):
     return df
 
 def get_fully_processed_data(client_id, access_token, sec_id, seg, expiry, symbol, lot_size):
-    """मास्टर फंक्शन: डेटा फेचिंग, नॉर्मलाइजेशन और ग्रीक्स कैलकुलेशन"""
+    """मास्टर फंक्शन: डेटा फेचिंग, नॉर्मलाइजेशन, ग्रीक्स और डायनेमिक बिल्ड-अप कैलकुलेशन"""
     raw_df, live_spot = fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symbol)
     if raw_df is None or raw_df.empty:
         return pd.DataFrame(), {}
         
     cleaned_df = normalize_columns(raw_df)
     processed_df = calculate_advanced_metrics(cleaned_df, live_spot, lot_size)
+    
+    # **डायनेमिक बिल्ड-अप और OI Change कैलकुलेशन**
+    processed_df = calculate_dynamic_buildup(processed_df, expiry)
     
     total_call_oi = processed_df['Raw_CE_OI'].sum()
     total_put_oi = processed_df['Raw_PE_OI'].sum()
