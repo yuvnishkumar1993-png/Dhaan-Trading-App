@@ -12,26 +12,71 @@ def norm_pdf(x):
 # पिछले टिक के डेटा को स्टोर करने के लिए ग्लोबल कैशे डिक्शनरी
 _PREV_TICK_CACHE = {}
 
+# दिन का बेसलाइन ओआई स्टोर करने के लिए ग्लोबल डिक्शनरी (ताकि 5 मिनट के रिफ्रेश पर भी डिलीट न हो)
+_BASELINE_OI_CACHE = {}
+
 def calculate_dynamic_buildup(df, expiry):
     """
-    API से मिलने वाले OI Change और LTP के आधार पर सीधे बिल्ड-अप तय करता है।
+    मार्केट की शुरुआत (या पहली फेच) के बेसलाइन ओआई के साथ तुलना करके 
+    सटीक इंट्राडे OI Change और Build-up कैलकुलेट करता है।
     """
+    global _BASELINE_OI_CACHE
+    
     if df is None or df.empty:
         return df
 
-    if 'CE OI Chg' not in df.columns:
-        df['CE OI Chg'] = 0
-    if 'PE OI Chg' not in df.columns:
-        df['PE OI Chg'] = 0
+    # 1. Raw CE & PE OI मानकीकृत करें
+    if 'Raw_CE_OI' not in df.columns:
+        for c in ['CE_OI', 'Call_OI', 'CE_OpenInterest', 'CE OI (L)', 'CE_OI_L']:
+            if c in df.columns:
+                mult = 100000 if 'L' in str(c) else 1
+                df['Raw_CE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(0) * mult
+                break
+        if 'Raw_CE_OI' not in df.columns:
+            df['Raw_CE_OI'] = 0
 
-    # यदि प्राइस चेंज कॉलम नहीं है, तो LTP बदलाव याडिफ़ॉल्ट मान लें
-    df['CE_Price_Chg'] = df.get('CE_LTP_Chg', df.get('CE_LTP', 0))
-    df['PE_Price_Chg'] = df.get('PE_LTP_Chg', df.get('PE_LTP', 0))
+    if 'Raw_PE_OI' not in df.columns:
+        for c in ['PE_OI', 'Put_OI', 'PE_OpenInterest', 'PE OI (L)', 'PE_OI_L']:
+            if c in df.columns:
+                mult = 100000 if 'L' in str(c) else 1
+                df['Raw_PE_OI'] = pd.to_numeric(df[c], errors='coerce').fillna(0) * mult
+                break
+        if 'Raw_PE_OI' not in df.columns:
+            df['Raw_PE_OI'] = 0
 
+    cache_key = f"{expiry}_{datetime.now().date()}"
+    
+    # 2. यदि आज की इस एक्सपायरी का बेसलाइन डेटा अभी तक सेव नहीं हुआ है, तो इसे सेव करें (यह दिन की शुरुआत का बेस OI बन जाएगा)
+    if cache_key not in _BASELINE_OI_CACHE or _BASELINE_OI_CACHE[cache_key].empty:
+        _BASELINE_OI_CACHE[cache_key] = df[['Strike', 'Raw_CE_OI', 'Raw_PE_OI']].copy()
+
+    base_df = _BASELINE_OI_CACHE[cache_key]
+
+    # 3. वर्तमान ओआई की तुलना बेसलाइन ओआई से करें
+    merged = pd.merge(df, base_df, on='Strike', suffixes=('', '_base'), how='left')
+    
+    # यदि API खुद OI Change दे रहा है और वह 0 नहीं है, तो उसे प्राथमिकता दें; अन्यथा बेसलाइन से घटाकर निकालें
+    if 'CE_OI_Chg' in df.columns and (df['CE_OI_Chg'] != 0).any():
+        df['CE OI Chg'] = df['CE_OI_Chg']
+    else:
+        df['CE OI Chg'] = (merged['Raw_CE_OI'] - merged['Raw_CE_OI_base'].fillna(merged['Raw_CE_OI'])).astype(int)
+
+    if 'PE_OI_Chg' in df.columns and (df['PE_OI_Chg'] != 0).any():
+        df['PE OI Chg'] = df['PE_OI_Chg']
+    else:
+        df['PE OI Chg'] = (merged['Raw_PE_OI'] - merged['Raw_PE_OI_base'].fillna(merged['Raw_PE_OI'])).astype(int)
+
+    # OI Change प्रतिशत (%) कैलकुलेशन
+    df['CE OI Chg %'] = np.where(merged['Raw_CE_OI_base'] > 0, 
+                                 (df['CE OI Chg'] / merged['Raw_CE_OI_base'] * 100).round(2), 0)
+    df['PE OI Chg %'] = np.where(merged['Raw_PE_OI_base'] > 0, 
+                                 (df['PE OI Chg'] / merged['Raw_PE_OI_base'] * 100).round(2), 0)
+
+    # 4. प्राइस चेंज (LTP Change) कैलकुलेशन के लिए पिछला LTP ट्रैक करें
+    # यदि आपके पास LTP चेंज का कॉलम नहीं है, तो मूल्य दिशा तय करने के लिए डिफॉल्ट लॉजिक
     def classify_build(oi_chg):
-        # यदि ओआई बढ़ रहा है तो Long/Short, घट रहा है तो Unwinding/Covering
         if oi_chg > 0:
-            return 'Short Buildup' # या प्राइस के आधार पर Long/Short
+            return 'Short Buildup'  # या लॉन्ग/शॉर्ट जो भी आपकी स्ट्रेटेजी हो
         elif oi_chg < 0:
             return 'Long Unwinding'
         return 'Neutral'
@@ -40,34 +85,6 @@ def calculate_dynamic_buildup(df, expiry):
     df['PE Build'] = df['PE OI Chg'].apply(lambda x: 'Short Buildup' if x > 0 else ('Long Unwinding' if x < 0 else 'Neutral'))
 
     return df
-def fetch_available_expiries(client_id, access_token, sec_id, seg):
-    """दिए गए एसेट के लिए उपलब्ध एक्सपायरी डेट्स फेच और सॉर्ट करता है"""
-    expiries = []
-    try:
-        from dhan_api import InstitutionalDataEngine
-        api_expiries = InstitutionalDataEngine.fetch_expiries(client_id, access_token, sec_id, seg)
-        if api_expiries:
-            expiries = list(api_expiries)
-    except Exception:
-        pass
-    
-    if not expiries:
-        today = datetime.now()
-        days_ahead = (3 - today.weekday() + 7) % 7  # 3 = Thursday
-        if days_ahead == 0:
-            days_ahead = 7
-        next_thursday = today + timedelta(days=days_ahead)
-        for i in range(5):
-            exp_date = next_thursday + timedelta(weeks=i)
-            expiries.append(exp_date.strftime("%Y-%m-%d"))
-            
-    try:
-        expiries = sorted(expiries, key=lambda x: datetime.strptime(str(x)[:10], "%Y-%m-%d"))
-    except Exception:
-        pass
-        
-    return expiries
-
 def fetch_market_option_chain(client_id, access_token, sec_id, seg, expiry, symbol):
     """Dhan API या फॉलबैक सिमुलेशन से लाइव ऑप्शन चेन डेटा फेच करता है"""
     try:
