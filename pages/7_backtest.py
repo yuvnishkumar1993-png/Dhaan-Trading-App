@@ -440,22 +440,62 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-    # --- 4. VISUAL OI BUILD-UP CHART (Plotly) ---
+  # --- 4. PROFESSIONAL INSTITUTIONAL OI DISTRIBUTION CHART (Plotly) ---
     if HAS_PLOTLY:
-        st.markdown("### 📈 Open Interest (OI) Distribution Chart")
-        chart_df = chain_df.tail(30).head(15).copy()
+        st.markdown("### 📈 Institutional Open Interest (OI) Distribution Chart")
+        
+        # Spot Price के आस-पास (ATM के ±12 स्ट्राइक्स) का सटीक डेटा फ़िल्टर करें
+        atm_idx = (chain_df['Strike'] - live_spot).abs().idxmin()
+        chart_start = max(0, atm_idx - 12)
+        chart_end = min(len(chain_df), atm_idx + 13)
+        chart_df = chain_df.iloc[chart_start:chart_end].copy()
+        
+        # OI को लाख (Lakhs) में कन्वर्ट करें ताकि चार्ट पर नंबर साफ दिखें
+        chart_df['CE_OI_L'] = chart_df['Raw_CE_OI'] / 100000
+        chart_df['PE_OI_L'] = chart_df['Raw_PE_OI'] / 100000
+        
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Raw_CE_OI'], name='Call OI (Resistance)', marker_color='#ef4444'))
-        fig.add_trace(go.Bar(x=chart_df['Strike'], y=chart_df['Raw_PE_OI'], name='Put OI (Support)', marker_color='#22c55e'))
+        
+        # Call OI (Resistance - Red Bar)
+        fig.add_trace(go.Bar(
+            x=chart_df['Strike'], 
+            y=chart_df['CE_OI_L'], 
+            name='Call OI (Resistance)', 
+            marker_color='#ef4444',
+            hovertemplate='Strike: %{x}<br>Call OI: %{y:.2f} Lakhs<extra></extra>'
+        ))
+        
+        # Put OI (Support - Green Bar)
+        fig.add_trace(go.Bar(
+            x=chart_df['Strike'], 
+            y=chart_df['PE_OI_L'], 
+            name='Put OI (Support)', 
+            marker_color='#22c55e',
+            hovertemplate='Strike: %{x}<br>Put OI: %{y:.2f} Lakhs<extra></extra>'
+        ))
+        
+        # Live Spot Price की वर्टिकल लाइन जोड़ें
+        fig.add_vline(
+            x=live_spot, 
+            line_dash="dash", 
+            line_color="#f59e0b", 
+            annotation_text=f"Spot: ₹{live_spot:,.2f}", 
+            annotation_position="top left"
+        )
+        
         fig.update_layout(
             barmode='group',
             plot_bgcolor='#0e1117',
             paper_bgcolor='#0e1117',
-            font=dict(color='#f8fafc'),
+            font=dict(color='#f8fafc', size=12),
             xaxis_title="Strike Price",
-            yaxis_title="Open Interest",
-            legend=dict(x=0, y=1.1, orientation="h")
+            yaxis_title="Open Interest (in Lakhs)",
+            legend=dict(x=0.01, y=0.99, bgcolor='rgba(0,0,0,0.6)', bordercolor='#30363d', borderwidth=1),
+            margin=dict(l=20, r=20, t=40, b=20),
+            hovermode="x unified"
         )
+        
+        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
+        
         st.plotly_chart(fig, use_container_width=True)
-
-render_institutional_terminal()
