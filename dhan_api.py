@@ -121,7 +121,6 @@ class InstitutionalDataEngine:
             'access-token': access_token.strip() if access_token else ''
         }
         
-        # इंटरवल के आधार पर तय करें कि कौन सा एंड-पॉइंट कॉल करना है
         if interval:
             url = "https://api.dhan.co/v2/charts/intraday"
             payload = {
@@ -148,7 +147,7 @@ class InstitutionalDataEngine:
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             if response.status_code == 200:
-                return response.json() # इसमें open, high, low, close, volume, timestamp मिलेंगे
+                return response.json() 
             else:
                 print(f"Error fetching historical data: {response.text}")
                 return {}
