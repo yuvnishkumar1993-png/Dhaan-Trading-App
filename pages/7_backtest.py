@@ -220,7 +220,7 @@ def render_institutional_terminal():
     if 'Raw_PE_OI' not in chain_df.columns: 
         chain_df['Raw_PE_OI'] = chain_df.get('PE_OI', chain_df.get('Put_OI', 100000))
 
-    # --- SESSION STATE BASELINE CACHE FOR INTRA-DAY OI CHANGE ---
+    # --- SESSION STATE BASELINE CACHE FOR INTRA-DAY OI CHANGE (Safe NaN handling) ---
     if "baseline_oi_store" not in st.session_state:
         st.session_state.baseline_oi_store = {}
 
@@ -229,21 +229,25 @@ def render_institutional_terminal():
     chain_df['Raw_CE_OI'] = pd.to_numeric(chain_df['Raw_CE_OI'], errors='coerce').fillna(0)
     chain_df['Raw_PE_OI'] = pd.to_numeric(chain_df['Raw_PE_OI'], errors='coerce').fillna(0)
 
-    # यदि इस एक्सपायरी का बेसलाइन सेव नहीं है, तो पहली बार के डेटा को बेसलाइन मान लें
     if exp_key not in st.session_state.baseline_oi_store or st.session_state.baseline_oi_store[exp_key].empty:
         st.session_state.baseline_oi_store[exp_key] = chain_df[['Strike', 'Raw_CE_OI', 'Raw_PE_OI']].copy()
 
     base_df = st.session_state.baseline_oi_store[exp_key]
     merged_df = pd.merge(chain_df, base_df, on='Strike', suffixes=('', '_base'), how='left')
 
-    # वास्तविक इंट्राडे OI Change और Percentage Calculate करें
-    chain_df['CE_Chg_OI'] = (merged_df['Raw_CE_OI'] - merged_df['Raw_CE_OI_base'].fillna(merged['Raw_CE_OI'])).astype(int)
-    chain_df['PE_Chg_OI'] = (merged_df['Raw_PE_OI'] - merged_df['Raw_PE_OI_base'].fillna(merged['Raw_PE_OI'])).astype(int)
+    ce_current = pd.to_numeric(merged_df['Raw_CE_OI'], errors='coerce').fillna(0)
+    ce_base = pd.to_numeric(merged_df['Raw_CE_OI_base'], errors='coerce').fillna(ce_current)
+    chain_df['CE_Chg_OI'] = (ce_current - ce_base).fillna(0).astype(int)
 
-    chain_df['CE_%Chg'] = np.where(merged_df['Raw_CE_OI_base'] > 0, 
-                                   (chain_df['CE_Chg_OI'] / merged_df['Raw_CE_OI_base'] * 100).round(2), 0.0)
-    chain_df['PE_%Chg'] = np.where(merged_df['Raw_PE_OI_base'] > 0, 
-                                   (chain_df['PE_Chg_OI'] / merged_df['Raw_PE_OI_base'] * 100).round(2), 0.0)
+    pe_current = pd.to_numeric(merged_df['Raw_PE_OI'], errors='coerce').fillna(0)
+    pe_base = pd.to_numeric(merged_df['Raw_PE_OI_base'], errors='coerce').fillna(pe_current)
+    chain_df['PE_Chg_OI'] = (pe_current - pe_base).fillna(0).astype(int)
+
+    ce_base_safe = pd.to_numeric(merged_df['Raw_CE_OI_base'], errors='coerce').fillna(0)
+    pe_base_safe = pd.to_numeric(merged_df['Raw_PE_OI_base'], errors='coerce').fillna(0)
+
+    chain_df['CE_%Chg'] = np.where(ce_base_safe > 0, (chain_df['CE_Chg_OI'] / ce_base_safe * 100).round(2), 0.0)
+    chain_df['PE_%Chg'] = np.where(pe_base_safe > 0, (chain_df['PE_Chg_OI'] / pe_base_safe * 100).round(2), 0.0)
 
     # --- ADVANCED QUANT ANALYTICS (Max Pain & Key Levels) ---
     def calculate_max_pain(df, spot):
