@@ -450,36 +450,80 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-    # --- 4. PROFESSIONAL INSTITUTIONAL OI DISTRIBUTION CHART (Plotly) ---
+# --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
     if HAS_PLOTLY:
-        st.markdown("### 📈 Institutional Open Interest (OI) Distribution Chart")
+        st.markdown("### 📈 Institutional Open Interest & Sigma Volatility Distribution Chart")
         
+        # Spot Price के आस-पास (ATM के ±15 स्ट्राइक्स) का सटीक डेटा फ़िल्टर करें
         atm_idx = (chain_df['Strike'] - live_spot).abs().idxmin()
-        chart_start = max(0, atm_idx - 12)
-        chart_end = min(len(chain_df), atm_idx + 13)
+        chart_start = max(0, atm_idx - 15)
+        chart_end = min(len(chain_df), atm_idx + 16)
         chart_df_plot = chain_df.iloc[chart_start:chart_end].copy()
         
+        # OI को लाख (Lakhs) में कन्वर्ट करें
         chart_df_plot['CE_OI_L'] = chart_df_plot['Raw_CE_OI'] / 100000
         chart_df_plot['PE_OI_L'] = chart_df_plot['Raw_PE_OI'] / 100000
         
-        fig = go.Figure()
+        # --- SIGMA & VOLATILITY CALCULATIONS ---
+        try:
+            # Expiry तक का समय (Years में)
+            exp_dt = datetime.strptime(selected_expiry, "%Y-%m-%d")
+            days_to_exp = max(0.01, (exp_dt - datetime.now()).total_seconds() / (24 * 3600))
+        except:
+            days_to_exp = 3.0
+        T_years = days_to_exp / 365.0
         
+        iv_decimal = atm_iv / 100.0 if atm_iv > 0 else 0.14
+        # Standard Deviation move in price scale ($\sigma = Spot \times IV \times \sqrt{T}$)
+        sigma_move = live_spot * iv_decimal * math.sqrt(T_years)
+        
+        sigma_1_low = live_spot - sigma_move
+        sigma_1_high = live_spot + sigma_move
+        sigma_2_low = live_spot - 2 * sigma_move
+        sigma_2_high = live_spot + 2 * sigma_move
+
+        # Secondary Y-Axis के लिए Normal Distribution Curve (Bell Curve) जनरेट करना
+        x_smooth = np.linspace(chart_df_plot['Strike'].min(), chart_df_plot['Strike'].max(), 300)
+        # Probability Density Function (PDF)
+        pdf_y = (1 / (sigma_move * math.sqrt(2 * math.pi))) * np.exp(-0.5 * ((x_smooth - live_spot) / sigma_move) ** 2)
+        # स्केल को बार्स के साथ मैच करने के लिए नॉर्मलाइज करें
+        max_oi = max(chart_df_plot['CE_OI_L'].max(), chart_df_plot['PE_OI_L'].max())
+        pdf_scaled = pdf_y * (max_oi / pdf_y.max()) if pdf_y.max() > 0 else pdf_y
+
+        # Subplots with Secondary Y-Axis
+        from plotly.subplots import make_subplots
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        # Call OI (Resistance - Red Bar)
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike'], 
             y=chart_df_plot['CE_OI_L'], 
             name='Call OI (Resistance)', 
             marker_color='#ef4444',
             hovertemplate='Strike: %{x}<br>Call OI: %{y:.2f} Lakhs<extra></extra>'
-        ))
+        ), secondary_y=False)
         
+        # Put OI (Support - Green Bar)
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike'], 
             y=chart_df_plot['PE_OI_L'], 
             name='Put OI (Support)', 
             marker_color='#22c55e',
             hovertemplate='Strike: %{x}<br>Put OI: %{y:.2f} Lakhs<extra></extra>'
-        ))
+        ), secondary_y=False)
+
+        # Sigma Distribution Probability Curve (Line)
+        fig.add_trace(go.Scatter(
+            x=x_smooth,
+            y=pdf_scaled,
+            mode='lines',
+            name='Implied Sigma Curve',
+            line=dict(color='#38bdf8', width=3, dash='solid'),
+            hovertemplate='Strike: %{x}<br>Prob Density: %{y:.2f}<extra></extra>'
+        ), secondary_y=True)
         
+        # --- ANNOTATIONS & KEY VERTICAL LINES ---
+        # 1. Live Spot Price Line
         fig.add_vline(
             x=live_spot, 
             line_dash="dash", 
@@ -488,6 +532,23 @@ def render_institutional_terminal():
             annotation_position="top left"
         )
         
+        # 2. Max Pain Line
+        fig.add_vline(
+            x=max_pain_val, 
+            line_dash="dot", 
+            line_color="#a855f7", 
+            annotation_text=f"Max Pain: {max_pain_val}", 
+            annotation_position="top right"
+        )
+
+        # 3. 1-Sigma Bounds (+/- 1σ)
+        fig.add_vrect(
+            x0=sigma_1_low, x1=sigma_1_high,
+            fillcolor="#38bdf8", opacity=0.08,
+            layer="below", line_width=0,
+            annotation_text="±1σ Zone (68% Prob)", annotation_position="top center"
+        )
+
         fig.update_layout(
             barmode='group',
             plot_bgcolor='#0e1117',
@@ -500,9 +561,8 @@ def render_institutional_terminal():
             hovermode="x unified"
         )
         
+        fig.update_yaxes(title_text="Open Interest (Lakhs)", secondary_y=False, showgrid=True, gridcolor='#21262d')
+        fig.update_yaxes(title_text="Probability Density", secondary_y=True, showgrid=False)
         fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
         
         st.plotly_chart(fig, use_container_width=True)
-
-render_institutional_terminal()
