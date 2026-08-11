@@ -441,7 +441,7 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-    # --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
+# --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
     if HAS_PLOTLY:
         st.markdown("### 📈 Institutional Open Interest & Sigma Volatility Distribution Chart")
         
@@ -449,6 +449,9 @@ def render_institutional_terminal():
         chart_start = max(0, atm_idx - 15)
         chart_end = min(len(chain_df), atm_idx + 16)
         chart_df_plot = chain_df.iloc[chart_start:chart_end].copy()
+        
+        # स्ट्राइक प्राइस को स्ट्रिंग (Text) में बदलना ताकि x-axis पर वह बिल्कुल सटीक और राउंड फिगर में दिखे
+        chart_df_plot['Strike_Str'] = chart_df_plot['Strike'].astype(int).astype(str)
         
         chart_df_plot['CE_OI_L'] = chart_df_plot['Raw_CE_OI'] / 100000
         chart_df_plot['PE_OI_L'] = chart_df_plot['Raw_PE_OI'] / 100000
@@ -468,67 +471,60 @@ def render_institutional_terminal():
         sig_2_low = live_spot - 2 * sig_move
         sig_2_high = live_spot + 2 * sig_move
 
-        x_vals = np.linspace(chart_df_plot['Strike'].min(), chart_df_plot['Strike'].max(), 300)
-        p_y = (1 / (sig_move * math.sqrt(2 * math.pi))) * np.exp(-0.5 * ((x_vals - live_spot) / sig_move) ** 2)
-        mx_oi = max(chart_df_plot['CE_OI_L'].max(), chart_df_plot['PE_OI_L'].max())
-        p_scaled = p_y * (mx_oi / p_y.max()) if p_y.max() > 0 else p_y
-
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
+        # ±2 Sigma Zone
         fig.add_vrect(
-            x0=sig_2_low, x1=sig_2_high,
+            x0=str(round(sig_2_low, -1)), x1=str(round(sig_2_high, -1)),
             fillcolor="#38bdf8", opacity=0.04,
             layer="below", line_width=0,
             annotation_text="±2σ Zone (95%)", annotation_position="top left"
         )
 
+        # ±1 Sigma Zone
         fig.add_vrect(
-            x0=sig_1_low, x1=sig_1_high,
+            x0=str(round(sig_1_low, -1)), x1=str(round(sig_1_high, -1)),
             fillcolor="#38bdf8", opacity=0.10,
             layer="below", line_width=0,
             annotation_text="±1σ Zone (68%)", annotation_position="top left"
         )
 
+        # Call OI Bars (स्ट्राइक स्ट्रिंग का उपयोग ताकि वैल्यू परफेक्ट दिखे)
         fig.add_trace(go.Bar(
-            x=chart_df_plot['Strike'], 
+            x=chart_df_plot['Strike_Str'], 
             y=chart_df_plot['CE_OI_L'], 
             name='Call OI (Resistance)', 
             marker_color='#ef4444',
             hovertemplate='Strike: %{x}<br>Call OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
         
+        # Put OI Bars
         fig.add_trace(go.Bar(
-            x=chart_df_plot['Strike'], 
+            x=chart_df_plot['Strike_Str'], 
             y=chart_df_plot['PE_OI_L'], 
             name='Put OI (Support)', 
             marker_color='#22c55e',
             hovertemplate='Strike: %{x}<br>Put OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
 
+        # स्मूथ कर्व के लिए x-axis को नंबर पर रखकर स्कैटर प्लॉट जोड़ना
+        x_smooth = np.linspace(chart_df_plot['Strike'].min(), chart_df_plot['Strike'].max(), 300)
+        p_y = (1 / (sig_move * math.sqrt(2 * math.pi))) * np.exp(-0.5 * ((x_smooth - live_spot) / sig_move) ** 2)
+        mx_oi = max(chart_df_plot['CE_OI_L'].max(), chart_df_plot['PE_OI_L'].max())
+        p_scaled = p_y * (mx_oi / p_y.max()) if p_y.max() > 0 else p_y
+
         fig.add_trace(go.Scatter(
-            x=x_vals,
+            x=x_smooth.astype(int).astype(str),
             y=p_scaled,
             mode='lines',
             name='Implied Sigma Curve',
             line=dict(color='#38bdf8', width=3),
-            hovertemplate='Strike: %{x}<br>Prob Density: %{y:.2f}<extra></extra>'
+            hovertemplate='Prob Density: %{y:.2f}<extra></extra>'
         ), secondary_y=True)
         
-        fig.add_vline(
-            x=live_spot, 
-            line_dash="dash", 
-            line_color="#f59e0b", 
-            annotation_text=f"Spot: ₹{live_spot:,.2f}", 
-            annotation_position="top left"
-        )
-        
-        fig.add_vline(
-            x=max_pain_val, 
-            line_dash="dot", 
-            line_color="#a855f7", 
-            annotation_text=f"Max Pain: {max_pain_val}", 
-            annotation_position="top right"
-        )
+        # Live Spot और Max Pain के लिए सटीक इंडेक्स ढूंढना
+        spot_str = str(round(live_spot / 50) * 50)
+        max_pain_str = str(round(max_pain_val / 50) * 50)
 
         fig.update_layout(
             barmode='group',
@@ -544,8 +540,12 @@ def render_institutional_terminal():
         
         fig.update_yaxes(title_text="Open Interest (Lakhs)", secondary_y=False, showgrid=True, gridcolor='#21262d')
         fig.update_yaxes(title_text="Probability Density", secondary_y=True, showgrid=False)
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#21262d')
+        fig.update_xaxes(
+            type='category',  # यह सुनिश्चित करता है कि स्ट्राइक प्राइस एकदम स्पष्ट और अलग-अलग दिखाई दें
+            showgrid=True, 
+            gridwidth=1, 
+            gridcolor='#21262d',
+            tickangle=-45     # स्ट्राइक प्राइस तिरछे दिखेंगे ताकि आपस में टकराएं नहीं
+        )
         
         st.plotly_chart(fig, use_container_width=True)
-
-render_institutional_terminal()
