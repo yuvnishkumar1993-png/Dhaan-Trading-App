@@ -561,22 +561,18 @@ def render_institutional_terminal():
         
         st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
-render_institutional_terminal()
-# --- 5. ADVANCED INTRADAY PCR (OI & VOLUME) TIME-SERIES LINE CHART ---
+    # --- 5. LIVE & HISTORICAL INTRADAY PCR (OI & VOLUME) TIME-SERIES LINE CHART ---
     if HAS_PLOTLY:
         st.markdown("### 📉 Live & Historical Put-Call Ratio (PCR) Intraday Trend")
         
-        # सेशन स्टेट में इस सिंबल और एक्सपायरी के लिए PCR हिस्ट्री स्टोर इनिशियलाइज करें
         pcr_key = f"pcr_history_ts_{selected_symbol}_{selected_expiry}"
         if pcr_key not in st.session_state:
             st.session_state[pcr_key] = []
 
-        # वर्तमान कुल OI और Volume की गणना
         total_ce_oi = chain_df['Raw_CE_OI'].sum()
         total_pe_oi = chain_df['Raw_PE_OI'].sum()
         current_oi_pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else 1.0
         
-        # वॉल्यूम आधारित PCR की गणना
         ce_vol_col = next((c for c in ['CE_Volume', 'Call_Volume', 'CE Vol (M)'] if c in chain_df.columns), None)
         pe_vol_col = next((c for c in ['PE_Volume', 'Put_Volume', 'PE Vol (M)'] if c in chain_df.columns), None)
         
@@ -590,7 +586,6 @@ render_institutional_terminal()
         current_time_str = datetime.now().strftime("%H:%M:%S")
         history_list = st.session_state[pcr_key]
 
-        # यदि यह पहली बार लोड हो रहा है, तो सुबह 09:15 से अब तक का बेस हिस्टोरिकल डेटा जनरेट करें
         if not history_list:
             now_dt = datetime.now()
             market_open = now_dt.replace(hour=9, minute=15, second=0, microsecond=0)
@@ -607,7 +602,6 @@ render_institutional_terminal()
                     sim_time += timedelta(minutes=15)
                     base_pcr += 0.015
 
-        # वर्तमान लाइव पॉइंट को जोड़ें या अपडेट करें
         if not history_list or history_list[-1]['Time'] != current_time_str:
             history_list.append({
                 'Time': current_time_str,
@@ -622,7 +616,6 @@ render_institutional_terminal()
         if not pcr_df.empty:
             fig_pcr = go.Figure()
             
-            # OI PCR Line (नीली लाइन)
             fig_pcr.add_trace(go.Scatter(
                 x=pcr_df['Time'],
                 y=pcr_df['OI_PCR'],
@@ -633,7 +626,6 @@ render_institutional_terminal()
                 hovertemplate='Time: %{x}<br>OI PCR: %{y:.2f}<extra></extra>'
             ))
             
-            # Volume PCR Line (पीली डॉटेड लाइन)
             fig_pcr.add_trace(go.Scatter(
                 x=pcr_df['Time'],
                 y=pcr_df['Vol_PCR'],
@@ -644,7 +636,6 @@ render_institutional_terminal()
                 hovertemplate='Time: %{x}<br>Vol PCR: %{y:.2f}<extra></extra>'
             ))
             
-            # न्यूट्रल लाइन (PCR = 1.0)
             fig_pcr.add_hline(
                 y=1.0, 
                 line_dash="dash", 
@@ -668,5 +659,5 @@ render_institutional_terminal()
             fig_pcr.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#21262d', zeroline=True)
             
             st.plotly_chart(fig_pcr, use_container_width=True, theme="streamlit")
-        else:
-            st.info("ℹ️ PCR ट्रेंड डेटा लोड हो रहा है...")
+
+render_institutional_terminal()
