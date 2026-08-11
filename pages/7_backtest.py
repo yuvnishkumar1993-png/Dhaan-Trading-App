@@ -441,7 +441,7 @@ def render_institutional_terminal():
     st.markdown("---")
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-   # --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
+# --- 4. ADVANCED INSTITUTIONAL QUANT OI & SIGMA DISTRIBUTION CHART (Plotly) ---
     if HAS_PLOTLY:
         st.markdown("### 📈 Institutional Open Interest & Sigma Volatility Distribution Chart")
         
@@ -475,6 +475,23 @@ def render_institutional_terminal():
 
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
+        # ±2 Sigma Zone (Outer Band - 95% Probability)
+        fig.add_vrect(
+            x0=sigma_2_low, x1=sigma_2_high,
+            fillcolor="#38bdf8", opacity=0.04,
+            layer="below", line_width=0,
+            annotation_text="±2σ Zone (95%)", annotation_position="top left"
+        )
+
+        # ±1 Sigma Zone (Inner Band - 68% Probability)
+        fig.add_vrect(
+            x0=sigma_1_low, x1=sigma_1_high,
+            fillcolor="#38bdf8", opacity=0.10,
+            layer="below", line_width=0,
+            annotation_text="±1σ Zone (68%)", annotation_position="top left"
+        )
+
+        # Call OI Bars
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike'], 
             y=chart_df_plot['CE_OI_L'], 
@@ -483,6 +500,7 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x}<br>Call OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
         
+        # Put OI Bars
         fig.add_trace(go.Bar(
             x=chart_df_plot['Strike'], 
             y=chart_df_plot['PE_OI_L'], 
@@ -491,6 +509,7 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x}<br>Put OI: %{y:.2f} Lakhs<extra></extra>'
         ), secondary_y=False)
 
+        # Implied Sigma Distribution Curve
         fig.add_trace(go.Scatter(
             x=x_smooth,
             y=pdf_scaled,
@@ -500,7 +519,7 @@ def render_institutional_terminal():
             hovertemplate='Strike: %{x}<br>Prob Density: %{y:.2f}<extra></extra>'
         ), secondary_y=True)
         
-        # 1. Live Spot Price Line
+        # Live Spot Price Line
         fig.add_vline(
             x=live_spot, 
             line_dash="dash", 
@@ -509,21 +528,13 @@ def render_institutional_terminal():
             annotation_position="top left"
         )
         
-        # 2. Max Pain Line
+        # Max Pain Line
         fig.add_vline(
             x=max_pain_val, 
             line_dash="dot", 
             line_color="#a855f7", 
             annotation_text=f"Max Pain: {max_pain_val}", 
             annotation_position="top right"
-        )
-
-        # 3. ±1 Sigma Zone (यहाँ 'top center' को 'top left' कर दिया गया है)
-        fig.add_vrect(
-            x0=sigma_1_low, x1=sigma_1_high,
-            fillcolor="#38bdf8", opacity=0.08,
-            layer="below", line_width=0,
-            annotation_text="±1σ Zone (68% Prob)", annotation_position="top left"
         )
 
         fig.update_layout(
